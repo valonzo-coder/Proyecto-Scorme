@@ -1,0 +1,6 @@
+{
+  "name": "EduBuilder SCORM",
+  "description": "Plataforma de autoría para docentes y diseñadores instruccionales: crea lecciones interactivas, evaluaciones y expórtalas como paquetes SCORM compatibles con Moodle.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
