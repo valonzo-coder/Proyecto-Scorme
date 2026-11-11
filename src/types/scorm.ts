@@ -42,7 +42,9 @@ export type BlockType =
   | 'tabs' 
   | 'flashcards' 
   | 'media' 
-  | 'checkpoint';
+  | 'checkpoint'
+  | 'math'
+  | 'resource';
 
 export interface BaseBlock {
   id: string;
@@ -52,12 +54,22 @@ export interface BaseBlock {
 
 export interface TextBlock extends BaseBlock {
   type: 'text';
-  content: string; // HTML or markdown-like styled text
+  content: string;
 }
+
+export type CalloutVariant = 
+  | 'definition' 
+  | 'example' 
+  | 'warning' 
+  | 'tip' 
+  | 'activity' 
+  | 'reflection' 
+  | 'info' 
+  | 'quote';
 
 export interface CalloutBlock extends BaseBlock {
   type: 'callout';
-  variant: 'tip' | 'warning' | 'info' | 'quote';
+  variant: CalloutVariant;
   title: string;
   content: string;
 }
@@ -99,7 +111,8 @@ export interface FlashcardsBlock extends BaseBlock {
 export interface MediaBlock extends BaseBlock {
   type: 'media';
   mediaType: 'image' | 'video_embed' | 'audio';
-  url: string;
+  url: string; // can be relative path (e.g. "media/banner.jpg") or external embed URL
+  mediaAssetId?: string; // reference to local media asset if uploaded
   caption?: string;
   altText?: string;
 }
@@ -109,6 +122,22 @@ export interface CheckpointBlock extends BaseBlock {
   questionId: string;
 }
 
+export interface MathBlock extends BaseBlock {
+  type: 'math';
+  latex: string;
+  caption?: string;
+  displayMode: boolean;
+}
+
+export interface ResourceBlock extends BaseBlock {
+  type: 'resource';
+  title: string;
+  description?: string;
+  filename: string;
+  relativePath: string;
+  fileSize?: number;
+}
+
 export type ContentBlock = 
   | TextBlock 
   | CalloutBlock 
@@ -116,7 +145,9 @@ export type ContentBlock =
   | TabsBlock 
   | FlashcardsBlock 
   | MediaBlock 
-  | CheckpointBlock;
+  | CheckpointBlock
+  | MathBlock
+  | ResourceBlock;
 
 export interface CourseLesson {
   id: string;
@@ -141,13 +172,13 @@ export interface AssessmentConfig {
   title: string;
   description: string;
   type: 'lesson_quiz' | 'final_exam';
-  passingScore: number; // e.g. 80 (%)
+  passingScore: number;
   questionIds: string[];
-  maxAttempts: number; // 0 = unlimited
+  maxAttempts: number;
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
   showFeedback: boolean;
-  timeLimitMinutes: number; // 0 = no limit
+  timeLimitMinutes: number;
 }
 
 export interface SCORMConfig {
@@ -155,7 +186,7 @@ export interface SCORMConfig {
   identifier: string;
   title: string;
   description: string;
-  masteryScore: number; // 0-100
+  masteryScore: number;
   completionCriteria: 'passed_incomplete' | 'completed_failed' | 'completed_incomplete';
   reportingMode: 'score_and_status' | 'status_only' | 'score_only';
   exitBehavior: 'suspend' | 'finish';
@@ -175,6 +206,7 @@ export interface CourseProject {
   estimatedDuration: string;
   author: string;
   organization: string;
+  coverImage?: string; // relative path "media/..." or data URI
   createdAt: string;
   updatedAt: string;
   units: CourseUnit[];
@@ -183,9 +215,36 @@ export interface CourseProject {
   scormConfig: SCORMConfig;
 }
 
+// Editable Project File Format (Standardized, Versioned)
+export const EDUBUILDER_FILE_FORMAT = 'EDUBUILDER_PROJECT';
+export const EDUBUILDER_FORMAT_VERSION = '1.0.0';
+
+export interface MediaAssetMeta {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  relativePath: string; // e.g. "media/imagen-1.png"
+}
+
+export interface EduBuilderProjectManifest {
+  format: 'EDUBUILDER_PROJECT';
+  formatVersion: '1.0.0';
+  appVersion: string;
+  exportedAt: string;
+  project: CourseProject;
+  mediaAssets: MediaAssetMeta[];
+}
+
+// Active Project Sync Status
+export type ProjectSyncStatus = 
+  | 'fresh'     // Proyecto recién creado en blanco
+  | 'loaded'    // Proyecto cargado desde archivo, sin cambios pendientes
+  | 'modified'  // Cambios pendientes de descargar
+  | 'saved';    // Cambios guardados en archivo descargado
+
 export type ActiveSection = 
-  | 'dashboard' 
-  | 'projects' 
+  | 'project_info' 
   | 'builder' 
   | 'questions' 
   | 'assessments' 

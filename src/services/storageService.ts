@@ -1,7 +1,9 @@
-import { CourseProject, QuestionItem, AssessmentConfig, SCORMConfig, CourseUnit } from '../types/scorm';
+import { CourseProject, QuestionItem, ProjectSyncStatus } from '../types/scorm';
+import { MediaService } from './mediaService';
 
-const STORAGE_KEY = 'edubuilder_scorm_projects_v1';
-const CURRENT_PROJECT_ID_KEY = 'edubuilder_current_project_id';
+const SESSION_KEY = 'edubuilder_active_project_session';
+const STATUS_KEY = 'edubuilder_active_project_status';
+const LAST_DOWNLOAD_KEY = 'edubuilder_last_downloaded_at';
 
 const INITIAL_QUESTIONS: QuestionItem[] = [
   {
@@ -67,32 +69,17 @@ const INITIAL_QUESTIONS: QuestionItem[] = [
       { id: 'm2', left: 'Analizar', right: 'Diferenciar componentes y detectar patrones' },
       { id: 'm3', left: 'Crear', right: 'Diseñar un plan o recurso didáctico original' },
     ]
-  },
-  {
-    id: 'q6',
-    type: 'multiple_choice',
-    prompt: '¿Qué ventaja principal ofrece el principio de Microaprendizaje (Microlearning)?',
-    explanation: 'El microaprendizaje fragmenta el conocimiento en unidades breves y enfocadas (3 a 7 minutos), lo que reduce la sobrecarga cognitiva y facilita la retención.',
-    points: 10,
-    difficulty: 'Fácil',
-    tags: ['Microaprendizaje', 'Metodología'],
-    options: [
-      { id: 'mc_a', text: 'Reduce la sobrecarga cognitiva con unidades digestibles y focalizadas', isCorrect: true },
-      { id: 'mc_b', text: 'Elimina la necesidad de realizar evaluaciones formativas', isCorrect: false },
-      { id: 'mc_c', text: 'Garantiza que ningún alumno repruebe sin estudiar', isCorrect: false },
-      { id: 'mc_d', text: 'Reemplaza a los docentes por robots sin supervisión', isCorrect: false },
-    ]
   }
 ];
 
-const INITIAL_DEFAULT_PROJECT: CourseProject = {
-  id: 'proj-demo-1',
+export const INITIAL_DEFAULT_PROJECT: CourseProject = {
+  id: 'edubuilder-course-1',
   title: 'Diseño Instruccional Digital y Estándar SCORM',
   description: 'Guía práctica interactiva para planificar unidades didácticas, formular evaluaciones por competencias y exportar paquetes SCORM 1.2 listos para Moodle.',
   category: 'Tecnología Educativa',
   level: 'Intermedio',
   estimatedDuration: '45 min',
-  author: 'Prof. Diseñador Instruccional',
+  author: 'Profesor Diseñador Instruccional',
   organization: 'Centro de Innovación Docente',
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
@@ -113,15 +100,15 @@ const INITIAL_DEFAULT_PROJECT: CourseProject = {
             {
               id: 'b-1',
               type: 'text',
-              title: '¿Qué es el diseño instruccional?',
-              content: '<p class="lead">El diseño instruccional es el proceso sistemático de traducir principios de aprendizaje e instrucción en especificaciones concretas para materiales, actividades, recursos y evaluación.</p><p>A diferencia de la simple digitalización de diapositivas o documentos PDF, un recurso interactivo efectivo fomenta la participación activa del estudiante mediante preguntas intercaladas, reflexiones y retroalimentación inmediata.</p>'
+              title: '¿Qué es el diseño instruccional y cómo se estructura?',
+              content: '<p class="lead">El diseño instruccional es el proceso sistemático de traducir principios de aprendizaje en recursos formativos altamente efectivos. Permite calcular el impacto formativo mediante métricas como $\\eta = \\frac{E_{final} - E_{inicial}}{E_{max}} \\times 100\\%$.</p><h3>Matriz de Fases Principales</h3><table class="border-collapse border border-slate-300 w-full my-3"><thead><tr class="bg-slate-100"><th class="border border-slate-300 p-2">Fase</th><th class="border border-slate-300 p-2">Entregable Clave</th><th class="border border-slate-300 p-2">Foco Pedagógico</th></tr></thead><tbody><tr><td class="border border-slate-300 p-2 font-bold">Análisis</td><td class="border border-slate-300 p-2">Perfil de audiencia</td><td class="border border-slate-300 p-2">Diagnóstico de necesidades</td></tr><tr><td class="border border-slate-300 p-2 font-bold">Diseño</td><td class="border border-slate-300 p-2">Matriz de competencias</td><td class="border border-slate-300 p-2">Taxonomía de Bloom</td></tr><tr><td class="border border-slate-300 p-2 font-bold">Desarrollo</td><td class="border border-slate-300 p-2">Paquete SCORM interactivo</td><td class="border border-slate-300 p-2">Microaprendizaje y práctica</td></tr></tbody></table><p>A diferencia de la simple digitalización de diapositivas estáticas, un recurso e-learning profesional fomenta la participación activa del estudiante.</p>'
             },
             {
               id: 'b-2',
               type: 'callout',
-              variant: 'tip',
-              title: 'Regla de Oro en E-learning',
-              content: 'Nunca presentes más de tres conceptos nuevos por pantalla. Utiliza tarjetas desplegables, pestañas interactivas o preguntas formativas para mantener la atención activa.'
+              variant: 'definition',
+              title: 'Definición de Objeto de Aprendizaje',
+              content: 'Entidad digital educativa autocontenida y reutilizable, diseñada con un objetivo instruccional específico, actividades de aplicación y mecanismos de evaluación formativa inmediata.'
             },
             {
               id: 'b-3',
@@ -174,7 +161,7 @@ const INITIAL_DEFAULT_PROJECT: CourseProject = {
               id: 'b-5',
               type: 'text',
               title: 'Teoría de la Carga Cognitiva de Sweller',
-              content: '<p>Nuestra memoria de trabajo tiene una capacidad limitada. Al diseñar recursos e-learning, debemos minimizar la <strong>carga cognitiva extrínseca</strong> (distractores, interfaces complejas o textos redundantes) para maximizar la <strong>carga germánica</strong> (construcción de esquemas mentales profundos).</p>'
+              content: '<p>Nuestra memoria de trabajo tiene una capacidad limitada. Al diseñar recursos e-learning, debemos minimizar la <strong>carga cognitiva extrínseca</strong> (distractores o interfaces complejas) para maximizar la <strong>carga germánica</strong> (construcción de esquemas mentales profundos).</p>'
             },
             {
               id: 'b-6',
@@ -261,6 +248,21 @@ const INITIAL_DEFAULT_PROJECT: CourseProject = {
               content: 'El archivo imsmanifest.xml DEBE encontrarse estrictamente en la raíz del archivo ZIP descargado. Si se comprime dentro de una carpeta padre, Moodle rechazará el paquete con error de manifiesto no encontrado.'
             },
             {
+              id: 'b-math-1',
+              type: 'math',
+              title: 'Modelo Matemático de Puntuación Ponderada SCORM',
+              latex: 'S_{final} = \\frac{\\sum_{j=1}^{m} w_j \\cdot s_j}{\\sum_{j=1}^{m} w_j} \\times 100\\%',
+              caption: 'Cálculo del puntaje maestro estandarizado cmi.core.score.raw transferido a la libreta de calificaciones de Moodle',
+              displayMode: true
+            },
+            {
+              id: 'b-example-1',
+              type: 'callout',
+              variant: 'example',
+              title: 'Ejemplo de Calificación Normalizada',
+              content: 'Si una actividad formativa pondera $w_1 = 0.4$ con puntaje $s_1 = 85$ y la evaluación sumativa $w_2 = 0.6$ con $s_2 = 90$, el LMS registrará un valor final de $88\\%$ cumpliendo el criterio de aprobación fijado en $80\\%$.'
+            },
+            {
               id: 'b-11',
               type: 'checkpoint',
               title: 'Verificación de Conceptos',
@@ -279,7 +281,7 @@ const INITIAL_DEFAULT_PROJECT: CourseProject = {
       description: 'Cuestionario sumativo para validar los conocimientos sobre diseño instruccional y empaquetado SCORM.',
       type: 'final_exam',
       passingScore: 80,
-      questionIds: ['q1', 'q2', 'q3', 'q4', 'q5', 'q6'],
+      questionIds: ['q1', 'q2', 'q3', 'q4', 'q5'],
       maxAttempts: 3,
       shuffleQuestions: true,
       shuffleOptions: true,
@@ -297,94 +299,7 @@ const INITIAL_DEFAULT_PROJECT: CourseProject = {
     reportingMode: 'score_and_status',
     exitBehavior: 'suspend',
     organizationName: 'EduBuilder Learning Academy',
-    authorName: 'Profesor Creador',
-    launchFileName: 'index.html',
-    enableApiDebug: true,
-    moodleCompatibilityMode: true
-  }
-};
-
-const SECOND_DEMO_PROJECT: CourseProject = {
-  id: 'proj-demo-2',
-  title: 'Ciberseguridad y Protección de Datos en Aulas Virtuales',
-  description: 'Buenas prácticas para docentes sobre gestión de contraseñas, prevención de phishing y cumplimiento de privacidad de estudiantes.',
-  category: 'Seguridad Digital',
-  level: 'Principiante',
-  estimatedDuration: '30 min',
-  author: 'Dpto. de Informática Educativa',
-  organization: 'Universidad Virtual',
-  createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-  updatedAt: new Date(Date.now() - 86400000).toISOString(),
-  units: [
-    {
-      id: 'sec-u1',
-      title: 'Unidad 1: Amenazas Comunes en Entornos Educativos',
-      description: 'Identificación de correos fraudulentos, enlaces maliciosos y secuestro de sesiones.',
-      order: 1,
-      lessons: [
-        {
-          id: 'sec-les-1',
-          title: '1.1 Detección Temprana de Phishing',
-          summary: 'Aprende a reconocer remitentes falsos y solicitudes sospechosas de credenciales.',
-          estimatedMinutes: 10,
-          order: 1,
-          blocks: [
-            {
-              id: 'sec-b1',
-              type: 'text',
-              title: 'Ingeniería Social en el Ámbito Académico',
-              content: '<p>Los ciberdelincuentes suelen suplantar la identidad de administradores del campus virtual para engañar a profesores y solicitar claves de acceso.</p>'
-            },
-            {
-              id: 'sec-b2',
-              type: 'callout',
-              variant: 'warning',
-              title: 'Alerta de Seguridad',
-              content: 'Ningún administrador de Moodle legítimo te pedirá tu contraseña por correo electrónico o mensaje privado jamás.'
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  questionBank: [
-    {
-      id: 'q-sec-1',
-      type: 'true_false',
-      prompt: '¿Es seguro reutilizar la misma contraseña del correo institucional en servicios externos de entretenimiento?',
-      explanation: 'Falso. Reutilizar contraseñas expone todas tus cuentas si un servicio secundario sufre una brecha de seguridad.',
-      points: 10,
-      difficulty: 'Fácil',
-      tags: ['Ciberseguridad', 'Contraseñas'],
-      trueFalseAnswer: false
-    }
-  ],
-  assessments: [
-    {
-      id: 'sec-exam',
-      title: 'Cuestionario de Certificación en Seguridad',
-      description: 'Examen de validación de prácticas seguras para educadores.',
-      type: 'final_exam',
-      passingScore: 70,
-      questionIds: ['q-sec-1'],
-      maxAttempts: 2,
-      shuffleQuestions: false,
-      shuffleOptions: true,
-      showFeedback: true,
-      timeLimitMinutes: 10
-    }
-  ],
-  scormConfig: {
-    version: '1.2',
-    identifier: 'com.edubuilder.ciberseguridad101',
-    title: 'Ciberseguridad en Aulas Virtuales',
-    description: 'Curso SCORM sobre seguridad de la información escolar.',
-    masteryScore: 70,
-    completionCriteria: 'passed_incomplete',
-    reportingMode: 'score_and_status',
-    exitBehavior: 'suspend',
-    organizationName: 'Universidad Virtual',
-    authorName: 'Coordinación TIC',
+    authorName: 'Profesor Diseñador Instruccional',
     launchFileName: 'index.html',
     enableApiDebug: true,
     moodleCompatibilityMode: true
@@ -392,108 +307,94 @@ const SECOND_DEMO_PROJECT: CourseProject = {
 };
 
 export class StorageService {
-  static getProjects(): CourseProject[] {
+  /**
+   * Retrieves the single active project.
+   * If a session exists in browser memory, restores it. Otherwise, returns initial starter template.
+   */
+  static getActiveProject(): { project: CourseProject; status: ProjectSyncStatus; lastDownloaded: string | null } {
     try {
-      const data = localStorage.getItem(STORAGE_KEY);
-      if (!data) {
-        const initial = [INITIAL_DEFAULT_PROJECT, SECOND_DEMO_PROJECT];
-        this.saveProjects(initial);
-        return initial;
+      const data = sessionStorage.getItem(SESSION_KEY);
+      const savedStatus = (sessionStorage.getItem(STATUS_KEY) as ProjectSyncStatus) || 'fresh';
+      const lastDownloaded = sessionStorage.getItem(LAST_DOWNLOAD_KEY);
+
+      if (data) {
+        return {
+          project: JSON.parse(data),
+          status: savedStatus,
+          lastDownloaded
+        };
       }
-      return JSON.parse(data);
     } catch (e) {
-      console.error('Error loading projects from localStorage', e);
-      return [INITIAL_DEFAULT_PROJECT];
+      console.error('Error recovering active project from session', e);
     }
+
+    return {
+      project: INITIAL_DEFAULT_PROJECT,
+      status: 'fresh',
+      lastDownloaded: null
+    };
   }
 
-  static saveProjects(projects: CourseProject[]): void {
+  /**
+   * Saves updates to the active in-memory session and marks it as modified (pending download).
+   */
+  static saveActiveProject(project: CourseProject, markAsModified: boolean = true): void {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(project));
+      if (markAsModified) {
+        sessionStorage.setItem(STATUS_KEY, 'modified');
+      }
     } catch (e) {
-      console.error('Error saving projects to localStorage', e);
+      console.error('Error updating active project in session', e);
     }
   }
 
-  static getProjectById(id: string): CourseProject | null {
-    const projects = this.getProjects();
-    return projects.find(p => p.id === id) || null;
-  }
-
-  static getCurrentProjectId(): string {
-    const saved = localStorage.getItem(CURRENT_PROJECT_ID_KEY);
-    if (saved) return saved;
-    const projects = this.getProjects();
-    const firstId = projects[0]?.id || 'proj-demo-1';
-    localStorage.setItem(CURRENT_PROJECT_ID_KEY, firstId);
-    return firstId;
-  }
-
-  static setCurrentProjectId(id: string): void {
-    localStorage.setItem(CURRENT_PROJECT_ID_KEY, id);
-  }
-
-  static saveProject(project: CourseProject): void {
-    const projects = this.getProjects();
-    const index = projects.findIndex(p => p.id === project.id);
-    const updated = {
-      ...project,
-      updatedAt: new Date().toISOString()
-    };
-    if (index >= 0) {
-      projects[index] = updated;
-    } else {
-      projects.unshift(updated);
+  /**
+   * Called when the user loads a project from a file.
+   */
+  static setLoadedProject(project: CourseProject): void {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(project));
+      sessionStorage.setItem(STATUS_KEY, 'loaded');
+      sessionStorage.removeItem(LAST_DOWNLOAD_KEY);
     }
-    this.saveProjects(projects);
   }
 
-  static deleteProject(id: string): boolean {
-    const projects = this.getProjects();
-    const filtered = projects.filter(p => p.id !== id);
-    if (filtered.length === projects.length) return false;
-    this.saveProjects(filtered);
-    if (this.getCurrentProjectId() === id) {
-      if (filtered.length > 0) {
-        this.setCurrentProjectId(filtered[0].id);
-      }
+  /**
+   * Called when the user downloads the editable project file.
+   */
+  static setProjectDownloaded(): void {
+    const timestamp = new Date().toLocaleTimeString();
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(STATUS_KEY, 'saved');
+      sessionStorage.setItem(LAST_DOWNLOAD_KEY, timestamp);
     }
-    return true;
   }
 
-  static duplicateProject(id: string): CourseProject | null {
-    const project = this.getProjectById(id);
-    if (!project) return null;
-    const newId = `proj-${Date.now()}`;
-    const duplicate: CourseProject = {
-      ...JSON.parse(JSON.stringify(project)),
-      id: newId,
-      title: `${project.title} (Copia)`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      scormConfig: {
-        ...project.scormConfig,
-        identifier: `${project.scormConfig.identifier}.copy.${Date.now().toString().slice(-4)}`,
-        title: `${project.title} (Copia)`
-      }
-    };
-    this.saveProject(duplicate);
-    return duplicate;
-  }
+  /**
+   * Creates a new blank project from scratch.
+   */
+  static createNewProject(
+    title: string, 
+    description: string, 
+    author: string, 
+    organization: string, 
+    category: string = 'General',
+    level: 'Principiante' | 'Intermedio' | 'Avanzado' = 'Intermedio'
+  ): CourseProject {
+    MediaService.clearAll();
 
-  static createNewProject(title: string, description: string, category: string, level: 'Principiante' | 'Intermedio' | 'Avanzado'): CourseProject {
-    const id = `proj-${Date.now()}`;
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'nuevo-curso';
-    
+
     const newProject: CourseProject = {
-      id,
+      id: `proj-${Date.now()}`,
       title,
-      description,
+      description: description || 'Recurso educativo interactivo estructurado en unidades y lecciones.',
       category: category || 'General',
       level,
       estimatedDuration: '30 min',
-      author: 'Docente Autor',
-      organization: 'Mi Institución Educativa',
+      author: author || 'Docente Autor',
+      organization: organization || 'Mi Institución Educativa',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       units: [
@@ -548,21 +449,25 @@ export class StorageService {
         version: '1.2',
         identifier: `com.edubuilder.${slug}`,
         title,
-        description,
+        description: description || '',
         masteryScore: 75,
         completionCriteria: 'passed_incomplete',
         reportingMode: 'score_and_status',
         exitBehavior: 'suspend',
-        organizationName: 'Mi Institución Educativa',
-        authorName: 'Docente Autor',
+        organizationName: organization || 'Mi Institución Educativa',
+        authorName: author || 'Docente Autor',
         launchFileName: 'index.html',
         enableApiDebug: true,
         moodleCompatibilityMode: true
       }
     };
 
-    this.saveProject(newProject);
-    this.setCurrentProjectId(id);
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(newProject));
+      sessionStorage.setItem(STATUS_KEY, 'fresh');
+      sessionStorage.removeItem(LAST_DOWNLOAD_KEY);
+    }
+
     return newProject;
   }
 }

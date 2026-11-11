@@ -33,13 +33,11 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
     const created = StorageService.createNewProject(
       title.trim(),
       description.trim() || 'Recurso educativo interactivo estructurado en unidades y lecciones.',
+      author.trim() || 'Docente Autor',
+      organization.trim() || 'Mi Institución Educativa',
       category,
       level
     );
-
-    created.author = author;
-    created.organization = organization;
-    StorageService.saveProject(created);
 
     onProjectCreated(created);
     onClose();

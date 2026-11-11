@@ -16,7 +16,14 @@ import {
   CheckCircle2,
   Edit2,
   Copy,
-  Info
+  Info,
+  Image as ImageIcon,
+  Upload,
+  Sigma,
+  Download,
+  Paperclip,
+  BookMarked,
+  Lightbulb
 } from 'lucide-react';
 import { 
   CourseProject, 
@@ -29,8 +36,14 @@ import {
   TabsBlock, 
   FlashcardsBlock, 
   CheckpointBlock, 
+  MediaBlock,
+  MathBlock,
+  ResourceBlock,
   BlockType 
 } from '../../types/scorm';
+import { MediaService } from '../../services/mediaService';
+import { MathService } from '../../services/mathService';
+import { RichTextEditor } from './RichTextEditor';
 
 interface ContentBuilderViewProps {
   project: CourseProject;
@@ -245,6 +258,37 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
           questionId: firstQ
         };
         break;
+      case 'media':
+        newBlock = {
+          id: blockId,
+          type: 'media',
+          title: 'Imagen o Recurso Visual',
+          mediaType: 'image',
+          url: '',
+          caption: 'Descripción o pie de foto explicativo',
+          altText: 'Ilustración didáctica'
+        };
+        break;
+      case 'math':
+        newBlock = {
+          id: blockId,
+          type: 'math',
+          title: 'Fórmula Matemática / Ecuación',
+          latex: 'E = m \\cdot c^2',
+          caption: 'Fórmula de equivalencia masa-energía',
+          displayMode: true
+        } as MathBlock;
+        break;
+      case 'resource':
+        newBlock = {
+          id: blockId,
+          type: 'resource',
+          title: 'Documento o Material Descargable',
+          description: 'Descarga este recurso para profundizar en los contenidos de la lección.',
+          filename: '',
+          relativePath: ''
+        } as ResourceBlock;
+        break;
       default:
         return;
     }
@@ -455,59 +499,86 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2">
                 <button
                   onClick={() => handleAddBlock('text')}
-                  className="flex flex-col items-center justify-center p-3 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-center group cursor-pointer"
                 >
-                  <FileText className="w-5 h-5 text-blue-600 mb-1.5 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">Texto</span>
-                  <span className="text-[10px] text-slate-400">Teoría &amp; listas</span>
+                  <FileText className="w-4 h-4 text-blue-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Texto</span>
+                  <span className="text-[9px] text-slate-400">Enriquecido</span>
                 </button>
 
                 <button
                   onClick={() => handleAddBlock('callout')}
-                  className="flex flex-col items-center justify-center p-3 rounded-lg border border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 transition-all text-center group cursor-pointer"
                 >
-                  <AlertCircle className="w-5 h-5 text-amber-600 mb-1.5 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">Destacado</span>
-                  <span className="text-[10px] text-slate-400">Tips pedagógicos</span>
+                  <AlertCircle className="w-4 h-4 text-amber-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Destacado</span>
+                  <span className="text-[9px] text-slate-400">Tips &amp; Ejemplos</span>
+                </button>
+
+                <button
+                  onClick={() => handleAddBlock('math')}
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-teal-300 hover:bg-teal-50/50 transition-all text-center group cursor-pointer"
+                >
+                  <Sigma className="w-4 h-4 text-teal-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Fórmula</span>
+                  <span className="text-[9px] text-slate-400">LaTeX / KaTeX</span>
+                </button>
+
+                <button
+                  onClick={() => handleAddBlock('media')}
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-sky-300 hover:bg-sky-50/50 transition-all text-center group cursor-pointer"
+                >
+                  <ImageIcon className="w-4 h-4 text-sky-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Multimedia</span>
+                  <span className="text-[9px] text-slate-400">Imagen / Video</span>
+                </button>
+
+                <button
+                  onClick={() => handleAddBlock('resource')}
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-purple-300 hover:bg-purple-50/50 transition-all text-center group cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-purple-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Recurso</span>
+                  <span className="text-[9px] text-slate-400">Descargable</span>
                 </button>
 
                 <button
                   onClick={() => handleAddBlock('accordion')}
-                  className="flex flex-col items-center justify-center p-3 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all text-center group cursor-pointer"
                 >
-                  <LayoutList className="w-5 h-5 text-indigo-600 mb-1.5 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">Acordeón</span>
-                  <span className="text-[10px] text-slate-400">Desplegables</span>
+                  <LayoutList className="w-4 h-4 text-indigo-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Acordeón</span>
+                  <span className="text-[9px] text-slate-400">Plegables</span>
                 </button>
 
                 <button
                   onClick={() => handleAddBlock('tabs')}
-                  className="flex flex-col items-center justify-center p-3 rounded-lg border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all text-center group cursor-pointer"
                 >
-                  <Layers className="w-5 h-5 text-emerald-600 mb-1.5 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">Pestañas</span>
-                  <span className="text-[10px] text-slate-400">Vistas paralelas</span>
+                  <Layers className="w-4 h-4 text-emerald-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Pestañas</span>
+                  <span className="text-[9px] text-slate-400">Paralelas</span>
                 </button>
 
                 <button
                   onClick={() => handleAddBlock('flashcards')}
-                  className="flex flex-col items-center justify-center p-3 rounded-lg border border-slate-200 hover:border-violet-300 hover:bg-violet-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-violet-300 hover:bg-violet-50/50 transition-all text-center group cursor-pointer"
                 >
-                  <Sparkles className="w-5 h-5 text-violet-600 mb-1.5 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">Flashcards</span>
-                  <span className="text-[10px] text-slate-400">Repaso activo</span>
+                  <Sparkles className="w-4 h-4 text-violet-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Tarjetas</span>
+                  <span className="text-[9px] text-slate-400">Flashcards</span>
                 </button>
 
                 <button
                   onClick={() => handleAddBlock('checkpoint')}
-                  className="flex flex-col items-center justify-center p-3 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50/50 transition-all text-center group cursor-pointer"
                 >
-                  <HelpCircle className="w-5 h-5 text-rose-600 mb-1.5 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold text-slate-800">Pregunta</span>
-                  <span className="text-[10px] text-slate-400">Comprobación</span>
+                  <HelpCircle className="w-4 h-4 text-rose-600 mb-1 group-hover:scale-110 transition-transform" />
+                  <span className="text-[11px] font-bold text-slate-800">Pregunta</span>
+                  <span className="text-[9px] text-slate-400">Comprobación</span>
                 </button>
               </div>
             </div>
@@ -572,46 +643,63 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                     <div className="p-4">
                       {block.type === 'text' && (
                         <div>
-                          <label className="block text-xs font-semibold text-slate-600 mb-1">
-                            Contenido del Bloque (HTML o texto estructurado)
+                          <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                            <span>Editor de Texto Enriquecido</span>
+                            <span className="text-[11px] font-normal text-slate-400">
+                              Admite fórmulas KaTeX ($...$ o $$...$$), tablas editables, listas e imágenes
+                            </span>
                           </label>
-                          <textarea
-                            rows={4}
-                            value={(block as TextBlock).content}
-                            onChange={(e) => handleUpdateBlock(block.id, { ...block, content: e.target.value })}
-                            className="w-full text-xs font-mono text-slate-800 p-3 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white leading-relaxed"
+                          <RichTextEditor
+                            content={(block as TextBlock).content}
+                            onChange={(html) => handleUpdateBlock(block.id, { ...block, content: html })}
+                            placeholder="Redacta las explicaciones teóricas, conceptos o actividades. Usa la barra para formatear o insertar fórmulas..."
                           />
-                          <p className="text-[11px] text-slate-400 mt-1">
-                            Tip: Puedes usar etiquetas como &lt;p&gt;, &lt;strong&gt;, &lt;em&gt; o listas &lt;ul&gt;&lt;li&gt;.
-                          </p>
                         </div>
                       )}
 
                       {block.type === 'callout' && (
                         <div className="space-y-3">
-                          <div className="flex items-center gap-3">
-                            <label className="text-xs font-semibold text-slate-600">Variante de estilo:</label>
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                            <label className="text-xs font-semibold text-slate-700">Tipo de Bloque Didáctico:</label>
                             <select
                               value={(block as CalloutBlock).variant}
                               onChange={(e) => handleUpdateBlock(block.id, { 
                                 ...block, 
                                 variant: e.target.value as any 
                               })}
-                              className="text-xs border border-slate-200 rounded p-1 bg-white"
+                              className="text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-medium text-slate-800"
                             >
-                              <option value="tip">Consejo Didáctico (Verde)</option>
-                              <option value="info">Información Clave (Azul)</option>
-                              <option value="warning">Advertencia / Alerta (Ámbar)</option>
+                              <option value="definition">📖 Definición Teórica (Púrpura)</option>
+                              <option value="example">🔍 Ejemplo Resuelto (Cian)</option>
+                              <option value="tip">💡 Consejo Práctico (Verde esmeralda)</option>
+                              <option value="warning">⚠️ Advertencia / Atención (Ámbar)</option>
+                              <option value="activity">⚡ Actividad de Aplicación (Naranja)</option>
+                              <option value="reflection">🤔 Pregunta de Reflexión (Fucsia)</option>
+                              <option value="info">ℹ️ Información Complementaria (Azul)</option>
                             </select>
                           </div>
                           <div>
-                            <label className="block text-xs font-semibold text-slate-600 mb-1">Mensaje Destacado</label>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                              Contenido del Destacado Didáctico (puedes incluir fórmulas LaTeX con $...$)
+                            </label>
                             <textarea
-                              rows={2}
+                              rows={3}
                               value={(block as CalloutBlock).content}
                               onChange={(e) => handleUpdateBlock(block.id, { ...block, content: e.target.value })}
-                              className="w-full text-xs text-slate-800 p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
+                              placeholder="Escribe el texto de la definición, ejemplo o reflexión..."
+                              className="w-full text-xs text-slate-800 p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white leading-relaxed"
                             />
+                            {/* Live preview of formulas in callout if any */}
+                            {((block as CalloutBlock).content.includes('$') || (block as CalloutBlock).content.includes('\\')) && (
+                              <div className="mt-2 p-2.5 bg-white border border-slate-200 rounded-lg text-xs">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Vista Previa con KaTeX:</span>
+                                <div 
+                                  dangerouslySetInnerHTML={{ 
+                                    __html: MathService.renderFormulasInHtml((block as CalloutBlock).content) 
+                                  }} 
+                                />
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
@@ -871,6 +959,291 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                               ))}
                             </select>
                           )}
+                        </div>
+                      )}
+
+                      {block.type === 'media' && (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3">
+                            <label className="text-xs font-semibold text-slate-700">Tipo de Recurso:</label>
+                            <select
+                              value={(block as MediaBlock).mediaType}
+                              onChange={(e) => handleUpdateBlock(block.id, { 
+                                ...block, 
+                                mediaType: e.target.value as any 
+                              })}
+                              className="text-xs border border-slate-300 rounded p-1 bg-white"
+                            >
+                              <option value="image">Imagen (Local o Enlace)</option>
+                              <option value="video_embed">Video Embebido (YouTube, Vimeo, etc.)</option>
+                            </select>
+                          </div>
+
+                          {(block as MediaBlock).mediaType === 'image' ? (
+                            <div className="space-y-2">
+                              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                                {(block as MediaBlock).url ? (
+                                  <div className="w-24 h-16 rounded border bg-slate-100 overflow-hidden shrink-0">
+                                    <img
+                                      src={MediaService.resolveMediaUrl((block as MediaBlock).url)}
+                                      alt="Vista previa"
+                                      className="w-full h-full object-cover"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="w-24 h-16 rounded border border-dashed border-slate-300 flex items-center justify-center text-slate-400 shrink-0">
+                                    <ImageIcon className="w-5 h-5" />
+                                  </div>
+                                )}
+
+                                <div className="flex-1 space-y-1">
+                                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg cursor-pointer">
+                                    <Upload className="w-3.5 h-3.5" />
+                                    <span>Subir imagen desde el equipo</span>
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      onChange={async (e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                          const meta = await MediaService.addMediaFile(file);
+                                          handleUpdateBlock(block.id, {
+                                            ...block,
+                                            url: meta.relativePath,
+                                            mediaAssetId: meta.id
+                                          });
+                                        }
+                                        e.target.value = '';
+                                      }}
+                                    />
+                                  </label>
+                                  <div className="text-[10px] text-slate-400">
+                                    O ingresa una URL:
+                                  </div>
+                                  <input
+                                    type="text"
+                                    value={(block as MediaBlock).url}
+                                    onChange={(e) => handleUpdateBlock(block.id, { ...block, url: e.target.value })}
+                                    placeholder="media/nombre.jpg o https://..."
+                                    className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white font-mono"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                URL del iframe de video embebido (YouTube embed, etc.)
+                              </label>
+                              <input
+                                type="text"
+                                value={(block as MediaBlock).url}
+                                onChange={(e) => handleUpdateBlock(block.id, { ...block, url: e.target.value })}
+                                placeholder="https://www.youtube.com/embed/..."
+                                className="w-full text-xs p-2 border border-slate-200 rounded bg-white font-mono"
+                              />
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                            <div>
+                              <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">Pie de foto / Leyenda</label>
+                              <input
+                                type="text"
+                                value={(block as MediaBlock).caption || ''}
+                                onChange={(e) => handleUpdateBlock(block.id, { ...block, caption: e.target.value })}
+                                placeholder="Ej. Diagrama del ciclo ADDIE"
+                                className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">Texto alternativo (accesibilidad)</label>
+                              <input
+                                type="text"
+                                value={(block as MediaBlock).altText || ''}
+                                onChange={(e) => handleUpdateBlock(block.id, { ...block, altText: e.target.value })}
+                                placeholder="Descripción accesible"
+                                className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {block.type === 'math' && (
+                        <div className="space-y-3">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                            <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                              <Sigma className="w-4 h-4 text-teal-600" />
+                              <span>Expresión Matemática (Sintaxis LaTeX):</span>
+                            </label>
+                            <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={(block as MathBlock).displayMode}
+                                onChange={(e) => handleUpdateBlock(block.id, { ...block, displayMode: e.target.checked })}
+                                className="rounded text-teal-600 focus:ring-teal-500"
+                              />
+                              <span>Centrar ecuación en bloque independiente</span>
+                            </label>
+                          </div>
+
+                          {/* Quick symbols helper */}
+                          <div className="flex flex-wrap gap-1 p-2 bg-slate-50 border border-slate-200 rounded-lg">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider self-center mr-1">Insertar:</span>
+                            {[
+                              { label: 'a/b', latex: '\\frac{a}{b}' },
+                              { label: '√x', latex: '\\sqrt{x}' },
+                              { label: 'x²', latex: 'x^{2}' },
+                              { label: 'xᵢ', latex: 'x_{i}' },
+                              { label: '∑', latex: '\\sum_{i=1}^{n}' },
+                              { label: '∫', latex: '\\int_{a}^{b}' },
+                              { label: '±', latex: '\\pm' },
+                              { label: 'π', latex: '\\pi' },
+                              { label: 'θ', latex: '\\theta' },
+                              { label: '≠', latex: '\\neq' },
+                              { label: '≤', latex: '\\le' },
+                              { label: '≥', latex: '\\ge' },
+                              { label: '∞', latex: '\\infty' },
+                            ].map((sym, sIdx) => (
+                              <button
+                                key={sIdx}
+                                type="button"
+                                onClick={() => {
+                                  const cur = (block as MathBlock).latex || '';
+                                  handleUpdateBlock(block.id, { ...block, latex: cur ? `${cur} ${sym.latex}` : sym.latex });
+                                }}
+                                className="px-2 py-0.5 text-xs font-mono bg-white hover:bg-teal-50 hover:text-teal-700 border border-slate-200 rounded text-slate-700 transition-colors cursor-pointer"
+                              >
+                                {sym.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          <textarea
+                            rows={3}
+                            value={(block as MathBlock).latex}
+                            onChange={(e) => handleUpdateBlock(block.id, { ...block, latex: e.target.value })}
+                            placeholder="Ej. f(x) = \\int_{-\\infty}^{\\infty} \\hat{f}(\\xi) e^{2\\pi i \\xi x} d\\xi"
+                            className="w-full text-xs font-mono text-slate-800 p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:bg-white"
+                          />
+
+                          <div>
+                            <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                              Pie explicativo / Leyenda de la ecuación (opcional)
+                            </label>
+                            <input
+                              type="text"
+                              value={(block as MathBlock).caption || ''}
+                              onChange={(e) => handleUpdateBlock(block.id, { ...block, caption: e.target.value })}
+                              placeholder="Ej. Transformada inversa de Fourier"
+                              className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
+                            />
+                          </div>
+
+                          {/* Live Rendered KaTeX Output */}
+                          <div className="p-4 bg-teal-50/40 border border-teal-200 rounded-xl">
+                            <span className="text-[10px] font-bold text-teal-800 uppercase tracking-wider block mb-2">
+                              Visualización con KaTeX:
+                            </span>
+                            <div 
+                              className="overflow-x-auto text-slate-900 py-1"
+                              dangerouslySetInnerHTML={{
+                                __html: MathService.renderLatexToHtml(
+                                  (block as MathBlock).latex || '...', 
+                                  (block as MathBlock).displayMode
+                                )
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {block.type === 'resource' && (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Título del Recurso
+                              </label>
+                              <input
+                                type="text"
+                                value={(block as ResourceBlock).title}
+                                onChange={(e) => handleUpdateBlock(block.id, { ...block, title: e.target.value })}
+                                placeholder="Ej. Guía práctica en PDF, Plantilla Excel..."
+                                className="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                                Cargar Archivo desde tu Computador
+                              </label>
+                              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg cursor-pointer transition-colors w-full justify-center">
+                                <Upload className="w-4 h-4" />
+                                <span>Seleccionar archivo (PDF, DOCX, ZIP, etc.)</span>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const meta = await MediaService.addMediaFile(file);
+                                      handleUpdateBlock(block.id, {
+                                        ...block,
+                                        filename: meta.filename,
+                                        relativePath: meta.relativePath,
+                                        fileSize: meta.size
+                                      });
+                                    }
+                                    e.target.value = '';
+                                  }}
+                                />
+                              </label>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-xs font-semibold text-slate-700 block mb-1">
+                              Descripción o Instrucción para el Estudiante
+                            </label>
+                            <textarea
+                              rows={2}
+                              value={(block as ResourceBlock).description || ''}
+                              onChange={(e) => handleUpdateBlock(block.id, { ...block, description: e.target.value })}
+                              placeholder="Explica para qué sirve este archivo y cuándo debe consultarlo el estudiante..."
+                              className="w-full text-xs text-slate-800 p-2 border border-slate-200 rounded-lg bg-white"
+                            />
+                          </div>
+
+                          {/* File status card */}
+                          <div className="p-3 bg-purple-50/50 border border-purple-200 rounded-lg flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 truncate">
+                              <Paperclip className="w-5 h-5 text-purple-600 shrink-0" />
+                              <div className="truncate">
+                                <div className="text-xs font-bold text-slate-800 truncate">
+                                  {(block as ResourceBlock).filename || 'Ningún archivo asignado'}
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-mono">
+                                  {(block as ResourceBlock).relativePath 
+                                    ? `Ruta en paquete: ${(block as ResourceBlock).relativePath} (${Math.round(((block as ResourceBlock).fileSize || 0) / 1024)} KB)`
+                                    : 'Haz clic en "Seleccionar archivo" para adjuntar el documento al proyecto.'}
+                                </div>
+                              </div>
+                            </div>
+
+                            {(block as ResourceBlock).relativePath && (
+                              <a
+                                href={MediaService.resolveMediaUrl((block as ResourceBlock).relativePath)}
+                                download={(block as ResourceBlock).filename}
+                                className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-purple-700 bg-white hover:bg-purple-100 border border-purple-200 rounded-lg shrink-0 cursor-pointer shadow-xs"
+                                title="Descargar para comprobar"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Probar</span>
+                              </a>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

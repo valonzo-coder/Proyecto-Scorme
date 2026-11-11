@@ -17,10 +17,32 @@ import {
   AlertCircle,
   HelpCircle,
   Check,
-  X
+  X,
+  Sigma,
+  Download,
+  Paperclip,
+  BookMarked,
+  Lightbulb,
+  FileDown
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { CourseProject, CourseLesson, ContentBlock, TextBlock, CalloutBlock, AccordionBlock, TabsBlock, FlashcardsBlock, CheckpointBlock, QuestionItem } from '../../types/scorm';
+import { 
+  CourseProject, 
+  CourseLesson, 
+  ContentBlock, 
+  TextBlock, 
+  CalloutBlock, 
+  AccordionBlock, 
+  TabsBlock, 
+  FlashcardsBlock, 
+  CheckpointBlock, 
+  MediaBlock, 
+  MathBlock,
+  ResourceBlock,
+  QuestionItem 
+} from '../../types/scorm';
+import { MediaService } from '../../services/mediaService';
+import { MathService } from '../../services/mathService';
 
 interface StudentPlayerPreviewProps {
   project: CourseProject;
@@ -402,26 +424,42 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
 
                           {block.type === 'text' && (
                             <div 
-                              className="text-xs text-slate-700 leading-relaxed space-y-2"
-                              dangerouslySetInnerHTML={{ __html: (block as TextBlock).content }}
+                              className="rich-content text-xs text-slate-800 leading-relaxed space-y-2"
+                              dangerouslySetInnerHTML={{ 
+                                __html: MathService.renderFormulasInHtml((block as TextBlock).content) 
+                              }}
                             />
                           )}
 
                           {block.type === 'callout' && (
-                            <div className={`p-4 rounded-xl border text-xs leading-relaxed ${
-                              (block as CalloutBlock).variant === 'tip'
-                                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                                : (block as CalloutBlock).variant === 'warning'
-                                ? 'bg-amber-50 border-amber-200 text-amber-900'
-                                : 'bg-blue-50 border-blue-200 text-blue-900'
-                            }`}>
-                              <div className="font-bold mb-1 flex items-center gap-1.5">
-                                {(block as CalloutBlock).variant === 'tip' && <span>💡 Consejo didáctico</span>}
-                                {(block as CalloutBlock).variant === 'warning' && <span>⚠️ Atención importante</span>}
-                                {(block as CalloutBlock).variant === 'info' && <span>ℹ️ Información clave</span>}
-                              </div>
-                              <div>{(block as CalloutBlock).content}</div>
-                            </div>
+                            (() => {
+                              const v = (block as CalloutBlock).variant;
+                              const variantConfig: Record<string, { bg: string; border: string; text: string; label: string; icon: string }> = {
+                                tip: { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-950', label: 'Consejo Práctico', icon: '💡' },
+                                warning: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-950', label: 'Advertencia Importante', icon: '⚠️' },
+                                info: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-950', label: 'Información Clave', icon: 'ℹ️' },
+                                definition: { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-950', label: 'Definición Teórica', icon: '📖' },
+                                example: { bg: 'bg-cyan-50', border: 'border-cyan-200', text: 'text-cyan-950', label: 'Ejemplo Resuelto', icon: '🔍' },
+                                activity: { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-950', label: 'Actividad de Aplicación', icon: '⚡' },
+                                reflection: { bg: 'bg-pink-50', border: 'border-pink-200', text: 'text-pink-950', label: 'Pregunta de Reflexión', icon: '🤔' },
+                              };
+                              const cfg = variantConfig[v] || variantConfig.info;
+
+                              return (
+                                <div className={`p-4 rounded-xl border text-xs leading-relaxed ${cfg.bg} ${cfg.border} ${cfg.text} shadow-2xs`}>
+                                  <div className="font-bold mb-1.5 flex items-center gap-1.5 text-xs">
+                                    <span>{cfg.icon}</span>
+                                    <span>{cfg.label}</span>
+                                  </div>
+                                  <div 
+                                    className="leading-relaxed"
+                                    dangerouslySetInnerHTML={{ 
+                                      __html: MathService.renderFormulasInHtml((block as CalloutBlock).content) 
+                                    }}
+                                  />
+                                </div>
+                              );
+                            })()
                           )}
 
                           {block.type === 'accordion' && (
@@ -561,6 +599,98 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                                 </div>
                               );
                             })()
+                          )}
+
+                          {block.type === 'media' && (
+                            <div className="my-4 text-center">
+                              {(block as MediaBlock).mediaType === 'image' ? (
+                                <div>
+                                  {(block as MediaBlock).url ? (
+                                    <img
+                                      src={MediaService.resolveMediaUrl((block as MediaBlock).url)}
+                                      alt={(block as MediaBlock).altText || ''}
+                                      className="max-w-full rounded-xl mx-auto shadow-xs border border-slate-200"
+                                    />
+                                  ) : (
+                                    <div className="p-8 bg-slate-100 rounded-xl text-slate-400 text-xs italic">
+                                      Imagen no configurada
+                                    </div>
+                                  )}
+                                  {(block as MediaBlock).caption && (
+                                    <p className="text-xs text-slate-500 mt-2 font-medium">
+                                      {(block as MediaBlock).caption}
+                                    </p>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="relative pb-[56.25%] h-0 overflow-hidden rounded-xl shadow-xs border border-slate-200">
+                                  <iframe
+                                    src={(block as MediaBlock).url}
+                                    className="absolute top-0 left-0 w-full h-full border-0"
+                                    allowFullScreen
+                                    title={(block as MediaBlock).caption || 'Video'}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {block.type === 'math' && (
+                            <div className="my-4 p-5 rounded-xl border border-teal-200 bg-teal-50/30 text-center">
+                              <div 
+                                className="overflow-x-auto py-2 text-slate-900 inline-block max-w-full"
+                                dangerouslySetInnerHTML={{
+                                  __html: MathService.renderLatexToHtml(
+                                    (block as MathBlock).latex || '', 
+                                    (block as MathBlock).displayMode !== false
+                                  )
+                                }}
+                              />
+                              {(block as MathBlock).caption && (
+                                <p className="text-xs text-slate-500 mt-2 font-medium">
+                                  {(block as MathBlock).caption}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {block.type === 'resource' && (
+                            <div className="my-4 p-4 rounded-xl border border-purple-200 bg-purple-50/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                              <div className="flex items-start gap-3">
+                                <div className="p-2.5 bg-purple-100 rounded-lg text-purple-700 shrink-0">
+                                  <FileDown className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <h4 className="text-xs font-bold text-slate-900">
+                                    {(block as ResourceBlock).title || (block as ResourceBlock).filename || 'Material Descargable'}
+                                  </h4>
+                                  {(block as ResourceBlock).description && (
+                                    <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
+                                      {(block as ResourceBlock).description}
+                                    </p>
+                                  )}
+                                  <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400 font-mono">
+                                    <span>{(block as ResourceBlock).filename}</span>
+                                    {!!(block as ResourceBlock).fileSize && (
+                                      <span>• {Math.round(((block as ResourceBlock).fileSize || 0) / 1024)} KB</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {(block as ResourceBlock).relativePath ? (
+                                <a
+                                  href={MediaService.resolveMediaUrl((block as ResourceBlock).relativePath)}
+                                  download={(block as ResourceBlock).filename}
+                                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors shrink-0 shadow-xs cursor-pointer"
+                                >
+                                  <Download className="w-4 h-4" />
+                                  <span>Descargar Material</span>
+                                </a>
+                              ) : (
+                                <span className="text-xs text-slate-400 italic">Archivo no disponible</span>
+                              )}
+                            </div>
                           )}
                         </div>
                       );
