@@ -19,14 +19,19 @@ export class ProjectPackageService {
    * Generates a downloadable editable project package (.zip or .edubuilder).
    * Contains project.json (versioned format) and a media/ folder with all embedded assets.
    */
-  static async exportEditableProject(project: CourseProject): Promise<Blob> {
+  static async exportEditableProject(rawProject: CourseProject): Promise<Blob> {
     const zip = new JSZip();
 
-    // 1. Gather all media assets currently in memory
-    const mediaItems = MediaService.getAllAssets();
+    // 1. Normalize & sanitize media references so no ephemeral blob: URLs are ever saved
+    const project = MediaService.sanitizeProjectMediaReferences(
+      NavigationService.migrateAndNormalizeProject(rawProject)
+    );
+
+    // 2. Gather ONLY media assets referenced by this active project
+    const mediaItems = MediaService.getAllAssets(project);
     const mediaManifest: MediaAssetMeta[] = mediaItems.map(item => item.meta);
 
-    // 2. Build the versioned manifest
+    // 3. Build the versioned manifest
     const manifest: EduBuilderProjectManifest = {
       format: EDUBUILDER_FILE_FORMAT,
       formatVersion: EDUBUILDER_FORMAT_VERSION,
@@ -39,17 +44,12 @@ export class ProjectPackageService {
       mediaAssets: mediaManifest
     };
 
-    // 3. Write project.json to root of ZIP
+    // 4. Write project.json to root of ZIP
     zip.file('project.json', JSON.stringify(manifest, null, 2));
 
-    // 4. Write all media assets to media/ folder
-    const mediaFolder = zip.folder('media');
-    if (mediaFolder) {
-      for (const item of mediaItems) {
-        // Filename within the media folder
-        const localFileName = item.meta.relativePath.replace(/^media\//, '');
-        mediaFolder.file(localFileName, item.blob);
-      }
+    // 5. Write all media assets to their exact relativePath (media/imagenes/..., media/audio/..., etc.)
+    for (const item of mediaItems) {
+      zip.file(item.meta.relativePath, item.blob);
     }
 
     // 5. Friendly README
@@ -175,17 +175,21 @@ paquete SCORM con imsmanifest.xml conforme a los estándares ADL.
       project.assessments = [];
     }
 
-    // 5. Restore Media Assets
-    MediaService.clearAll();
+    // 5. Ensure project ID exists & restore Media Assets strictly scoped to this project
+    if (!project.id) {
+      project.id = `proj-${Date.now()}`;
+    }
+    MediaService.clearAll(project.id);
     let mediaCount = 0;
-    const mediaAssets: MediaAssetMeta[] = manifest.mediaAssets || [];
+    const mediaAssets: MediaAssetMeta[] = Array.isArray(manifest.mediaAssets) ? manifest.mediaAssets : [];
 
     for (const asset of mediaAssets) {
       const fileInZip = zip.file(asset.relativePath);
       if (fileInZip) {
         try {
-          const blob = await fileInZip.async('blob');
-          MediaService.registerUnpackedAsset(asset, blob);
+          const buffer = await fileInZip.async('arraybuffer');
+          const blob = new Blob([buffer], { type: asset.mimeType || 'application/octet-stream' });
+          MediaService.registerUnpackedAsset(asset, blob, project.id);
           mediaCount++;
         } catch (mediaErr) {
           console.warn(`No se pudo cargar el recurso multimedia: ${asset.relativePath}`, mediaErr);
@@ -193,7 +197,9 @@ paquete SCORM con imsmanifest.xml conforme a los estándares ADL.
       }
     }
 
-    const migratedProject = NavigationService.migrateAndNormalizeProject(project);
+    const migratedProject = MediaService.sanitizeProjectMediaReferences(
+      NavigationService.migrateAndNormalizeProject(project)
+    );
 
     return {
       project: migratedProject,

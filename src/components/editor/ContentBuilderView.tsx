@@ -50,6 +50,7 @@ import {
 } from '../../types/scorm';
 import { MediaService } from '../../services/mediaService';
 import { MathService } from '../../services/mathService';
+import { CategoryService, isQuestionAutoGradable } from '../../services/categoryService';
 import { DEFAULT_LESSON_NAV_CONFIG, DEFAULT_PAGE_NAV_RULE } from '../../services/navigationService';
 import { RichTextEditor } from './RichTextEditor';
 import { PageNavigationPanel } from './PageNavigationPanel';
@@ -121,6 +122,13 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
     return true;
   });
   const [showRightPanel, setShowRightPanel] = useState<boolean>(true);
+  const [, setMediaRevision] = useState<number>(() => MediaService.getRevision());
+
+  useEffect(() => {
+    return MediaService.subscribe(() => {
+      setMediaRevision(MediaService.getRevision());
+    });
+  }, []);
 
   useEffect(() => {
     try {
@@ -151,11 +159,15 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
     }
   }, [inlineNotice]);
 
-  const updateUnits = (newUnits: CourseUnit[]) => {
-    onUpdateProject({
+  const updateUnits = (newUnits: CourseUnit[], pruneMedia: boolean = false) => {
+    const updatedProject: CourseProject = {
       ...project,
       units: newUnits
-    });
+    };
+    if (pruneMedia) {
+      MediaService.pruneUnreferencedAssets(updatedProject);
+    }
+    onUpdateProject(updatedProject);
   };
 
   // Toggle accordion states in tree
@@ -377,7 +389,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
       const filtered = project.units
         .filter(u => u.id !== pendingDelete.unitId)
         .map((u, idx) => ({ ...u, order: idx + 1 }));
-      updateUnits(filtered);
+      updateUnits(filtered, true);
       if (selectedUnitId === pendingDelete.unitId && filtered[0]) {
         const nextU = filtered[0];
         const nextL = nextU.lessons[0];
@@ -398,7 +410,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
         }
         return { ...u, lessons: filteredLessons };
       });
-      updateUnits(newUnits);
+      updateUnits(newUnits, true);
     } else if (pendingDelete.kind === 'page' && pendingDelete.lessonId && pendingDelete.pageId) {
       const newUnits = project.units.map(u => {
         if (u.id !== pendingDelete.unitId) return u;
@@ -416,7 +428,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
           })
         };
       });
-      updateUnits(newUnits);
+      updateUnits(newUnits, true);
     }
 
     setPendingDelete(null);
@@ -474,7 +486,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
   };
 
   // Update active page metadata / rule / blocks
-  const handleUpdateCurrentPage = (updates: Partial<CoursePage>) => {
+  const handleUpdateCurrentPage = (updates: Partial<CoursePage>, pruneMedia: boolean = false) => {
     if (!currentUnit || !currentLesson || !currentPage) return;
     const newUnits = project.units.map(u => {
       if (u.id !== currentUnit.id) return u;
@@ -489,7 +501,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
         })
       };
     });
-    updateUnits(newUnits);
+    updateUnits(newUnits, pruneMedia);
   };
 
   const handleUpdatePageRule = (rule: PageNavigationRule) => {
@@ -555,7 +567,10 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
         };
         break;
       case 'checkpoint': {
-        const qId = presetQuestionId || project.questionBank[0]?.id || '';
+        const firstCompatible = project.questionBank.find(
+          q => isQuestionAutoGradable(q) && !q.pendingAdaptation
+        );
+        const qId = presetQuestionId || firstCompatible?.id || '';
         newBlock = {
           id: blockId,
           type: 'checkpoint',
@@ -604,18 +619,24 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
     });
   };
 
-  const handleUpdateBlock = (blockId: string, updatedBlock: ContentBlock) => {
+  const handleUpdateBlock = (blockId: string, updatedBlock: ContentBlock, pruneMedia: boolean = false) => {
     if (!currentPage) return;
-    handleUpdateCurrentPage({
-      blocks: currentPage.blocks.map(b => (b.id === blockId ? updatedBlock : b))
-    });
+    handleUpdateCurrentPage(
+      {
+        blocks: currentPage.blocks.map(b => (b.id === blockId ? updatedBlock : b))
+      },
+      pruneMedia
+    );
   };
 
   const handleDeleteBlock = (blockId: string) => {
     if (!currentPage) return;
-    handleUpdateCurrentPage({
-      blocks: currentPage.blocks.filter(b => b.id !== blockId)
-    });
+    handleUpdateCurrentPage(
+      {
+        blocks: currentPage.blocks.filter(b => b.id !== blockId)
+      },
+      true
+    );
   };
 
   const handleMoveBlock = (index: number, direction: 'up' | 'down') => {
@@ -1750,19 +1771,42 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                               Aún no has creado preguntas en el banco de reactivos. Ve a la sección "Banco de Preguntas" para formularlas.
                             </div>
                           ) : (
-                            <select
-                              value={(block as CheckpointBlock).questionId}
-                              onChange={(e) =>
-                                handleUpdateBlock(block.id, { ...block, questionId: e.target.value })
-                              }
-                              className="w-full text-xs text-slate-800 p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
-                            >
-                              {project.questionBank.map((q) => (
-                                <option key={q.id} value={q.id}>
-                                  [{q.type}] {q.prompt} ({q.points} pts)
-                                </option>
-                              ))}
-                            </select>
+                            <>
+                              <select
+                                value={(block as CheckpointBlock).questionId}
+                                onChange={(e) =>
+                                  handleUpdateBlock(block.id, { ...block, questionId: e.target.value })
+                                }
+                                className="w-full text-xs text-slate-800 p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
+                              >
+                                <option value="">-- Seleccionar pregunta autocorregible --</option>
+                                {project.questionBank.map((q) => {
+                                  const compat = isQuestionAutoGradable(q) && !q.pendingAdaptation;
+                                  const catLabel = CategoryService.getCategoryBreadcrumb(
+                                    project.questionCategories || [],
+                                    q.categoryId
+                                  );
+                                  return (
+                                    <option key={q.id} value={q.id} disabled={!compat}>
+                                      {compat ? '' : '[No autocorregible] '}[{catLabel}] {(q.name || q.prompt).slice(0, 55)} ({q.points} pts)
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                              {(() => {
+                                const sel = project.questionBank.find(
+                                  q => q.id === (block as CheckpointBlock).questionId
+                                );
+                                if (sel && (!isQuestionAutoGradable(sel) || sel.pendingAdaptation)) {
+                                  return (
+                                    <p className="text-[11px] text-rose-700 font-semibold">
+                                      Esta pregunta ({sel.type}) no es autocorregible; selecciona otra pregunta compatible para que el bloque funcione en SCORM.
+                                    </p>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </>
                           )}
                         </div>
                       )}
@@ -1776,19 +1820,26 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                             <select
                               value={(block as MediaBlock).mediaType}
                               onChange={(e) =>
-                                handleUpdateBlock(block.id, {
-                                  ...block,
-                                  mediaType: e.target.value as any
-                                })
+                                handleUpdateBlock(
+                                  block.id,
+                                  {
+                                    ...block,
+                                    mediaType: e.target.value as MediaBlock['mediaType'],
+                                    url: ''
+                                  },
+                                  true
+                                )
                               }
-                              className="text-xs border border-slate-300 rounded p-1 bg-white"
+                              className="text-xs border border-slate-300 rounded p-1.5 bg-white"
                             >
                               <option value="image">Imagen (Local o Enlace)</option>
+                              <option value="audio">Audio Local (MP3, WAV, OGG)</option>
+                              <option value="video_file">Video Local (MP4, WebM)</option>
                               <option value="video_embed">Video Embebido (YouTube, Vimeo, etc.)</option>
                             </select>
                           </div>
 
-                          {(block as MediaBlock).mediaType === 'image' ? (
+                          {(block as MediaBlock).mediaType === 'image' && (
                             <div className="space-y-2">
                               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                                 {(block as MediaBlock).url ? (
@@ -1816,12 +1867,16 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                       onChange={async (e) => {
                                         const file = e.target.files?.[0];
                                         if (file) {
-                                          const meta = await MediaService.addMediaFile(file);
-                                          handleUpdateBlock(block.id, {
-                                            ...block,
-                                            url: meta.relativePath,
-                                            mediaAssetId: meta.id
-                                          });
+                                          const meta = await MediaService.addMediaFile(file, project.id);
+                                          handleUpdateBlock(
+                                            block.id,
+                                            {
+                                              ...block,
+                                              url: meta.relativePath,
+                                              mediaAssetId: meta.id
+                                            },
+                                            true
+                                          );
                                         }
                                         e.target.value = '';
                                       }}
@@ -1836,13 +1891,103 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                     onChange={(e) =>
                                       handleUpdateBlock(block.id, { ...block, url: e.target.value })
                                     }
-                                    placeholder="media/nombre.jpg o https://..."
+                                    placeholder="media/imagenes/nombre.jpg o https://..."
                                     className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white font-mono"
                                   />
                                 </div>
                               </div>
                             </div>
-                          ) : (
+                          )}
+
+                          {(block as MediaBlock).mediaType === 'audio' && (
+                            <div className="space-y-2.5 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg cursor-pointer">
+                                  <Upload className="w-3.5 h-3.5" />
+                                  <span>Subir audio desde el equipo</span>
+                                  <input
+                                    type="file"
+                                    accept="audio/*"
+                                    className="hidden"
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const meta = await MediaService.addMediaFile(file, project.id);
+                                        handleUpdateBlock(
+                                          block.id,
+                                          {
+                                            ...block,
+                                            url: meta.relativePath,
+                                            mediaAssetId: meta.id
+                                          },
+                                          true
+                                        );
+                                      }
+                                      e.target.value = '';
+                                    }}
+                                  />
+                                </label>
+                                {(block as MediaBlock).url && (
+                                  <span className="text-[11px] font-mono text-slate-500 truncate max-w-xs">
+                                    {(block as MediaBlock).url}
+                                  </span>
+                                )}
+                              </div>
+                              {(block as MediaBlock).url && (
+                                <audio
+                                  controls
+                                  src={MediaService.resolveMediaUrl((block as MediaBlock).url)}
+                                  className="w-full"
+                                />
+                              )}
+                            </div>
+                          )}
+
+                          {(block as MediaBlock).mediaType === 'video_file' && (
+                            <div className="space-y-2.5 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg cursor-pointer">
+                                  <Upload className="w-3.5 h-3.5" />
+                                  <span>Subir video desde el equipo</span>
+                                  <input
+                                    type="file"
+                                    accept="video/*"
+                                    className="hidden"
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const meta = await MediaService.addMediaFile(file, project.id);
+                                        handleUpdateBlock(
+                                          block.id,
+                                          {
+                                            ...block,
+                                            url: meta.relativePath,
+                                            mediaAssetId: meta.id
+                                          },
+                                          true
+                                        );
+                                      }
+                                      e.target.value = '';
+                                    }}
+                                  />
+                                </label>
+                                {(block as MediaBlock).url && (
+                                  <span className="text-[11px] font-mono text-slate-500 truncate max-w-xs">
+                                    {(block as MediaBlock).url}
+                                  </span>
+                                )}
+                              </div>
+                              {(block as MediaBlock).url && (
+                                <video
+                                  controls
+                                  src={MediaService.resolveMediaUrl((block as MediaBlock).url)}
+                                  className="w-full max-h-64 rounded-lg bg-black"
+                                />
+                              )}
+                            </div>
+                          )}
+
+                          {(block as MediaBlock).mediaType === 'video_embed' && (
                             <div>
                               <label className="block text-xs font-semibold text-slate-700 mb-1">
                                 URL del iframe de video embebido (YouTube embed, etc.)
@@ -2023,13 +2168,17 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                   onChange={async (e) => {
                                     const file = e.target.files?.[0];
                                     if (file) {
-                                      const meta = await MediaService.addMediaFile(file);
-                                      handleUpdateBlock(block.id, {
-                                        ...block,
-                                        filename: meta.filename,
-                                        relativePath: meta.relativePath,
-                                        fileSize: meta.size
-                                      });
+                                      const meta = await MediaService.addMediaFile(file, project.id);
+                                      handleUpdateBlock(
+                                        block.id,
+                                        {
+                                          ...block,
+                                          filename: meta.filename,
+                                          relativePath: meta.relativePath,
+                                          fileSize: meta.size
+                                        },
+                                        true
+                                      );
                                     }
                                     e.target.value = '';
                                   }}

@@ -72,6 +72,22 @@ const COMMON_MATH_SYMBOLS = [
   { label: '∞', latex: '\\infty ' }
 ];
 
+const PersistentImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      'data-media-path': {
+        default: null,
+        parseHTML: element => element.getAttribute('data-media-path'),
+        renderHTML: attributes => {
+          if (!attributes['data-media-path']) return {};
+          return { 'data-media-path': attributes['data-media-path'] };
+        }
+      }
+    };
+  }
+});
+
 export const RichTextEditor: React.FC<RichTextEditorProps> = ({
   content,
   onChange,
@@ -83,9 +99,17 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [mediaRevision, setMediaRevision] = useState(() => MediaService.getRevision());
 
   const [showTableMenu, setShowTableMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return MediaService.subscribe(() => {
+      setMediaRevision(MediaService.getRevision());
+    });
+  }, []);
 
   const editor = useEditor({
     extensions: [
@@ -107,7 +131,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
           class: 'text-blue-600 underline font-medium'
         }
       }),
-      Image.configure({
+      PersistentImage.configure({
         inline: true,
         allowBase64: true,
         HTMLAttributes: {
@@ -124,18 +148,23 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
       TableHeader,
       TableCell
     ],
-    content: content || '<p></p>',
+    content: MediaService.hydrateRichHtmlForDisplay(content || '<p></p>'),
     onUpdate: ({ editor }) => {
-      onChange(editor.getHTML());
+      onChange(MediaService.normalizeRichHtmlForStorage(editor.getHTML()));
     }
   });
 
-  // Keep editor content in sync if parent changes externally
+  // Keep editor content in sync if parent changes externally or when MediaService restores IDB blobs
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content || '<p></p>');
+    if (!editor) return;
+    const normalizedIncoming = MediaService.normalizeRichHtmlForStorage(content || '<p></p>');
+    const normalizedCurrent = MediaService.normalizeRichHtmlForStorage(editor.getHTML());
+    const hydratedIncoming = MediaService.hydrateRichHtmlForDisplay(normalizedIncoming);
+
+    if (normalizedIncoming !== normalizedCurrent || editor.getHTML() !== hydratedIncoming) {
+      editor.commands.setContent(hydratedIncoming, { emitUpdate: false });
     }
-  }, [content, editor]);
+  }, [content, editor, mediaRevision]);
 
   if (!editor) {
     return null;
@@ -145,13 +174,22 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setMediaError(null);
 
     try {
       const meta = await MediaService.addMediaFile(file);
       const activeUrl = MediaService.resolveMediaUrl(meta.relativePath);
-      editor.chain().focus().setImage({ src: activeUrl, alt: meta.filename }).run();
+      editor
+        .chain()
+        .focus()
+        .setImage({
+          src: activeUrl,
+          alt: meta.filename,
+          'data-media-path': meta.relativePath
+        } as any)
+        .run();
     } catch (err) {
-      alert('Error al insertar imagen local.');
+      setMediaError('Error al insertar la imagen local. Verifica que el archivo sea válido.');
     }
     e.target.value = '';
   };
@@ -498,6 +536,16 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
           <span className="text-[10px]">Fórmula LaTeX</span>
         </button>
       </div>
+
+      {/* Inline Media Error Banner */}
+      {mediaError && (
+        <div className="px-3 py-2 bg-rose-50 border-b border-rose-200 text-[11px] font-semibold text-rose-700 flex items-center justify-between">
+          <span>{mediaError}</span>
+          <button type="button" onClick={() => setMediaError(null)} className="text-rose-500 hover:text-rose-700 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Editor Content Area */}
       <div className="p-4 min-h-[160px] bg-white cursor-text" onClick={() => editor.chain().focus()}>

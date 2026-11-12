@@ -101,7 +101,7 @@ export const ScormConfigView: React.FC<ScormConfigViewProps> = ({
                 <span>Estándar y Versión SCORM</span>
               </h3>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <label className={`p-4 rounded-xl border cursor-pointer transition-all ${
                   config.version === '1.2'
                     ? 'border-blue-600 bg-blue-50/40 ring-1 ring-blue-600/30'
@@ -118,10 +118,33 @@ export const ScormConfigView: React.FC<ScormConfigViewProps> = ({
                     />
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed mb-2">
-                    Recomendado para Moodle. Máxima compatibilidad con el 100% de plataformas LMS tradicionales y modernas.
+                    Recomendado para Moodle. Máxima compatibilidad con el 100% de plataformas LMS.
                   </p>
                   <span className="text-[10px] font-bold text-blue-700 uppercase">
                     Estándar oficial en Moodle
+                  </span>
+                </label>
+
+                <label className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                  config.version === '2004_3rd'
+                    ? 'border-blue-600 bg-blue-50/40 ring-1 ring-blue-600/30'
+                    : 'border-slate-200 hover:border-slate-300'
+                }`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-sm text-slate-900">SCORM 2004 (3rd Ed)</span>
+                    <input
+                      type="radio"
+                      name="scorm_ver"
+                      checked={config.version === '2004_3rd'}
+                      onChange={() => handleUpdateConfig('version', '2004_3rd')}
+                      className="text-blue-600"
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed mb-2">
+                    Estándar ADL 2004 3ra Edición con modelo de datos API_1484_11.
+                  </p>
+                  <span className="text-[10px] font-bold text-indigo-700 uppercase">
+                    ADL 2004 3rd Edition
                   </span>
                 </label>
 
@@ -144,7 +167,7 @@ export const ScormConfigView: React.FC<ScormConfigViewProps> = ({
                     Secuenciación avanzada e interacción con el objeto de aprendizaje API_1484_11.
                   </p>
                   <span className="text-[10px] font-bold text-indigo-700 uppercase">
-                    Secuenciación compleja
+                    ADL 2004 4th Edition
                   </span>
                 </label>
               </div>
@@ -212,7 +235,10 @@ export const ScormConfigView: React.FC<ScormConfigViewProps> = ({
                       min="0"
                       max="100"
                       value={config.masteryScore}
-                      onChange={(e) => handleUpdateConfig('masteryScore', parseInt(e.target.value) || 70)}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        handleUpdateConfig('masteryScore', Number.isNaN(val) ? 0 : Math.min(100, Math.max(0, val)));
+                      }}
                       className="w-24 text-sm font-bold font-mono text-center border border-slate-300 rounded-lg p-2 bg-slate-50"
                     />
                     <span className="text-xs text-slate-600 font-bold">% sobre 100</span>
@@ -234,6 +260,35 @@ export const ScormConfigView: React.FC<ScormConfigViewProps> = ({
                     <option value="passed_incomplete">Passed / Incomplete (Recomendado)</option>
                     <option value="completed_failed">Completed / Failed</option>
                     <option value="completed_incomplete">Completed / Incomplete</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Modo de Reporte al LMS
+                  </label>
+                  <select
+                    value={config.reportingMode || 'score_and_status'}
+                    onChange={(e) => handleUpdateConfig('reportingMode', e.target.value as any)}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2.5 bg-slate-50"
+                  >
+                    <option value="score_and_status">Calificación + Estado (Recomendado)</option>
+                    <option value="status_only">Solo Estado de Finalización</option>
+                    <option value="score_only">Solo Calificación Numérica</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Comportamiento al Salir (cmi.core.exit)
+                  </label>
+                  <select
+                    value={config.exitBehavior || 'suspend'}
+                    onChange={(e) => handleUpdateConfig('exitBehavior', e.target.value as any)}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2.5 bg-slate-50"
+                  >
+                    <option value="suspend">Suspender y reanudar (suspend)</option>
+                    <option value="finish">Finalizar sesión normal</option>
                   </select>
                 </div>
               </div>

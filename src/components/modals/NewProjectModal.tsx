@@ -14,21 +14,23 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
   onClose,
   onProjectCreated
 }) => {
-  if (!isOpen) return null;
-
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Tecnología Educativa');
   const [level, setLevel] = useState<'Principiante' | 'Intermedio' | 'Avanzado'>('Intermedio');
   const [author, setAuthor] = useState('Profesor / Diseñador');
   const [organization, setOrganization] = useState('Mi Centro Educativo');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
-      alert('Por favor ingresa un título para el recurso.');
+      setErrorMsg('Por favor ingresa un título para el recurso.');
       return;
     }
+    setErrorMsg(null);
 
     const created = StorageService.createNewProject(
       title.trim(),
@@ -62,6 +64,11 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="py-4 space-y-4">
+          {errorMsg && (
+            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs font-medium text-rose-700">
+              {errorMsg}
+            </div>
+          )}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
               Título del Curso o Módulo <span className="text-rose-500">*</span>
@@ -70,7 +77,10 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
               type="text"
               required
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                if (errorMsg) setErrorMsg(null);
+              }}
               placeholder="Ej. Estrategias de Evaluación por Competencias"
               className="w-full text-xs text-slate-800 p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
             />

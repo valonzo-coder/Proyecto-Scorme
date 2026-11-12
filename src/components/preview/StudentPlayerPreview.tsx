@@ -45,11 +45,13 @@ import {
 } from '../../types/scorm';
 import { MediaService } from '../../services/mediaService';
 import { MathService } from '../../services/mathService';
+import { CategoryService } from '../../services/categoryService';
 import {
   NavigationService,
   DEFAULT_LESSON_NAV_CONFIG,
   createEmptyPageRuntime
 } from '../../services/navigationService';
+import { SafeRichContent } from '../questions/SafeRichContent';
 
 interface StudentPlayerPreviewProps {
   project: CourseProject;
@@ -147,10 +149,24 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
   const [quizAnswers, setQuizAnswers] = useState<Record<string, any>>({});
   const [quizScore, setQuizScore] = useState<number | null>(null);
   const [isPassed, setIsPassed] = useState<boolean | null>(null);
+  const [assessmentSubmitted, setAssessmentSubmitted] = useState<boolean>(false);
+  const [shuffleSeed, setShuffleSeed] = useState<number>(1);
+
+  // Controlled checkpoint draft state per questionId
+  const [draftBlank, setDraftBlank] = useState<Record<string, string>>({});
+  const [draftMulti, setDraftMulti] = useState<Record<string, string[]>>({});
+  const [draftMatch, setDraftMatch] = useState<Record<string, Record<string, string>>>({});
 
   // SCORM CMI Logs console
   const [scormLogs, setScormLogs] = useState<ScormLog[]>([]);
   const [showConsole, setShowConsole] = useState(true);
+  const [, setMediaRevision] = useState<number>(() => MediaService.getRevision());
+
+  useEffect(() => {
+    return MediaService.subscribe(() => {
+      setMediaRevision(MediaService.getRevision());
+    });
+  }, []);
 
   const contentScrollRef = useRef<HTMLDivElement>(null);
 
@@ -218,14 +234,26 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
 
   // Initial LMS initialization log
   useEffect(() => {
+    const savedAssessmentValues = Object.values(progressState.completedAssessments || {});
+    const hasTerminal = savedAssessmentValues.length > 0 || (totalLessons > 0 && completedCount >= totalLessons);
     if (isScorm2004) {
       addScormLog('Initialize', '""', undefined, 'true');
       addScormLog('GetValue', 'cmi.learner_name', undefined, '"Estudiante Moodle"');
-      addScormLog('SetValue', 'cmi.completion_status', 'incomplete', 'true');
+      addScormLog('GetValue', 'cmi.completion_status', undefined, hasTerminal ? '"completed"' : '"incomplete"');
     } else {
       addScormLog('LMSInitialize', '""', undefined, 'true');
       addScormLog('LMSGetValue', 'cmi.core.student_name', undefined, '"Estudiante Moodle"');
-      addScormLog('LMSSetValue', 'cmi.core.lesson_status', 'incomplete', 'true');
+      const priorStatus = savedAssessmentValues.some(a => a.passed)
+        ? 'passed'
+        : savedAssessmentValues.length > 0
+        ? 'failed'
+        : (totalLessons > 0 && completedCount >= totalLessons)
+        ? 'completed'
+        : 'incomplete';
+      addScormLog('LMSGetValue', 'cmi.core.lesson_status', undefined, `"${priorStatus}"`);
+      if (!hasTerminal) {
+        addScormLog('LMSSetValue', 'cmi.core.lesson_status', 'incomplete', 'true');
+      }
     }
   }, [isScorm2004, addScormLog]);
 
@@ -386,17 +414,13 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
       return;
     }
 
-    let isCorrect = false;
-    if (q.type === 'multiple_choice') {
-      const opt = q.options?.find(o => o.id === answerValue);
-      isCorrect = !!opt?.isCorrect;
-    } else if (q.type === 'true_false') {
-      isCorrect = answerValue === (q.trueFalseAnswer ? 'true' : 'false');
-    } else if (q.type === 'fill_blank') {
-      isCorrect =
-        String(answerValue || '').trim().toLowerCase() ===
-        String(q.blankAnswer || '').trim().toLowerCase();
+    if (!NavigationService.hasValidAnswer(q, answerValue)) {
+      setNavNotice('Completa tu respuesta antes de comprobar.');
+      return;
     }
+
+    const isCorrect = NavigationService.evaluateQuestionAnswer(q, answerValue);
+    setNavNotice(null);
 
     addScormLog(
       isScorm2004 ? 'SetValue' : 'LMSSetValue',
@@ -539,31 +563,38 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
     });
   };
 
+  // Deterministic sort helper for reproducible option/question shuffling
+  const seededSort = <T,>(items: T[], seedStr: string, getKey: (item: T) => string): T[] => {
+    const hash = (s: string) => {
+      let h = 2166136261;
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    };
+    return [...items].sort((a, b) => hash(seedStr + ':' + getKey(a)) - hash(seedStr + ':' + getKey(b)));
+  };
+
   // Submit final assessment
   const handleSubmitQuiz = () => {
     if (!activeAssessment) return;
-    const questions = project.questionBank.filter(q =>
-      activeAssessment.questionIds.includes(q.id)
-    );
+    const prevRecord = progressState.completedAssessments?.[activeAssessment.id];
+    const attemptsUsed = prevRecord?.attempts ?? (prevRecord ? 1 : 0);
+    if (activeAssessment.maxAttempts > 0 && attemptsUsed >= activeAssessment.maxAttempts) {
+      setNavNotice(`Has alcanzado el límite de ${activeAssessment.maxAttempts} intentos en esta evaluación.`);
+      return;
+    }
+
+    const questions = CategoryService.getAssessmentEffectiveQuestions(activeAssessment, project);
     let earned = 0;
     let total = 0;
 
     questions.forEach(q => {
       total += q.points;
       const userAns = quizAnswers[q.id];
-      if (q.type === 'multiple_choice') {
-        const correctOpt = q.options?.find(o => o.isCorrect);
-        if (correctOpt && userAns === correctOpt.id) earned += q.points;
-      } else if (q.type === 'true_false') {
-        const expected = q.trueFalseAnswer ? 'true' : 'false';
-        if (userAns === expected) earned += q.points;
-      } else if (q.type === 'fill_blank') {
-        if (
-          userAns &&
-          userAns.trim().toLowerCase() === (q.blankAnswer || '').trim().toLowerCase()
-        ) {
-          earned += q.points;
-        }
+      if (NavigationService.evaluateQuestionAnswer(q, userAns)) {
+        earned += q.points;
       }
     });
 
@@ -571,32 +602,47 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
     setQuizScore(scorePct);
     const passed = scorePct >= activeAssessment.passingScore;
     setIsPassed(passed);
+    setAssessmentSubmitted(true);
+
+    const nextAttempts = attemptsUsed + 1;
+    const criteria = project.scormConfig.completionCriteria || 'passed_incomplete';
+    const reporting = project.scormConfig.reportingMode || 'score_and_status';
 
     setProgressState(prev => {
       const nextState: StudentProgressState = {
         ...prev,
         completedAssessments: {
           ...prev.completedAssessments,
-          [activeAssessment.id]: { score: scorePct, passed }
+          [activeAssessment.id]: { score: scorePct, passed, attempts: nextAttempts }
         }
       };
       syncScormState(nextState, false);
       return nextState;
     });
 
-    if (isScorm2004) {
-      addScormLog('SetValue', 'cmi.score.raw', String(scorePct), 'true');
-      addScormLog('SetValue', 'cmi.score.scaled', (scorePct / 100).toFixed(2), 'true');
-      addScormLog('SetValue', 'cmi.success_status', passed ? 'passed' : 'failed', 'true');
-      addScormLog('SetValue', 'cmi.completion_status', 'completed', 'true');
-      addScormLog('Commit', '""', undefined, 'true');
-    } else {
-      addScormLog('LMSSetValue', 'cmi.core.score.raw', String(scorePct), 'true');
-      addScormLog('LMSSetValue', 'cmi.core.score.min', '0', 'true');
-      addScormLog('LMSSetValue', 'cmi.core.score.max', '100', 'true');
-      addScormLog('LMSSetValue', 'cmi.core.lesson_status', passed ? 'passed' : 'failed', 'true');
-      addScormLog('LMSCommit', '""', undefined, 'true');
+    if (reporting !== 'status_only') {
+      if (isScorm2004) {
+        addScormLog('SetValue', 'cmi.score.raw', String(scorePct), 'true');
+        addScormLog('SetValue', 'cmi.score.scaled', (scorePct / 100).toFixed(2), 'true');
+      } else {
+        addScormLog('LMSSetValue', 'cmi.core.score.raw', String(scorePct), 'true');
+        addScormLog('LMSSetValue', 'cmi.core.score.min', '0', 'true');
+        addScormLog('LMSSetValue', 'cmi.core.score.max', '100', 'true');
+      }
     }
+
+    if (reporting !== 'score_only') {
+      if (isScorm2004) {
+        addScormLog('SetValue', 'cmi.success_status', passed ? 'passed' : 'failed', 'true');
+        addScormLog('SetValue', 'cmi.completion_status', 'completed', 'true');
+      } else {
+        let status12 = passed ? 'passed' : 'failed';
+        if (criteria === 'completed_incomplete') status12 = passed ? 'completed' : 'incomplete';
+        else if (criteria === 'completed_failed') status12 = passed ? 'completed' : 'failed';
+        addScormLog('LMSSetValue', 'cmi.core.lesson_status', status12, 'true');
+      }
+    }
+    addScormLog(isScorm2004 ? 'Commit' : 'LMSCommit', '""', undefined, 'true');
 
     if (passed) {
       try {
@@ -616,6 +662,11 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
     setQuizAnswers({});
     setQuizScore(null);
     setIsPassed(null);
+    setAssessmentSubmitted(false);
+    setShuffleSeed(s => s + 1);
+    setDraftBlank({});
+    setDraftMulti({});
+    setDraftMatch({});
     setAccordionState({});
     setTabState({});
     setFlashcardFlipped({});
@@ -664,13 +715,21 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
     const userAnswer = currentRuntime.questionAnswers?.[q.id];
     const isCorrect = !!currentRuntime.questionCorrect?.[q.id];
     const attempts = currentRuntime.questionAttempts?.[q.id] || 0;
-    const isChecked = userAnswer !== undefined && userAnswer !== '';
+    const isChecked = NavigationService.hasValidAnswer(q, userAnswer) && attempts > 0;
     const rule = currentPage?.navigationRule;
     const showFeedback = rule?.type === 'question' ? rule.showFeedback !== false : true;
     const maxAttempts = rule?.type === 'question' ? rule.maxAttempts || 0 : 0;
     const lockedByAttempts =
       (maxAttempts > 0 && attempts >= maxAttempts) ||
       (rule?.type === 'question' && rule.allowRetry === false && attempts >= 1);
+
+    const currentMultiDraft: string[] = draftMulti[q.id] ?? (Array.isArray(userAnswer) ? userAnswer : []);
+    const currentBlankDraft: string = draftBlank[q.id] ?? (typeof userAnswer === 'string' ? userAnswer : '');
+    const currentMatchDraft: Record<string, string> =
+      draftMatch[q.id] ?? (userAnswer && typeof userAnswer === 'object' && !Array.isArray(userAnswer) ? userAnswer : {});
+    const shuffledRightOptions = q.matchingPairs
+      ? seededSort(q.matchingPairs.map(p => p.right), `chk_${q.id}`, r => r)
+      : [];
 
     return (
       <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/30 space-y-3">
@@ -686,7 +745,15 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
           )}
         </div>
 
-        <p className="text-xs font-bold text-slate-900">{q.prompt}</p>
+        <div className="text-xs font-bold text-slate-900">
+          <SafeRichContent html={q.promptHtml} fallbackText={q.prompt} />
+        </div>
+
+        {!NavigationService.isQuestionAutoGradable(q) && (
+          <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+            Este tipo de pregunta ({q.type}) no admite autocorrección automática. Edita la página para vincular una pregunta compatible.
+          </div>
+        )}
 
         {q.type === 'multiple_choice' && (
           <div className="space-y-1.5">
@@ -696,9 +763,9 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                 <button
                   key={opt.id}
                   type="button"
-                  disabled={lockedByAttempts && !isChosen}
+                  disabled={lockedByAttempts}
                   onClick={() => handleAnswerPageQuestion(q, opt.id)}
-                  className={`w-full text-left p-2.5 rounded-lg text-xs border transition-colors flex items-center justify-between cursor-pointer disabled:opacity-60 ${
+                  className={`w-full text-left p-2.5 rounded-lg text-xs border transition-colors flex items-center justify-between cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
                     isChosen
                       ? isCorrect
                         ? 'bg-emerald-100 border-emerald-400 text-emerald-950 font-bold'
@@ -719,6 +786,48 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
           </div>
         )}
 
+        {q.type === 'multiple_response' && (
+          <div className="space-y-2">
+            <div className="space-y-1.5">
+              {q.options?.map(opt => {
+                const checked = currentMultiDraft.includes(opt.id);
+                return (
+                  <label
+                    key={opt.id}
+                    className={`flex items-center gap-2.5 p-2.5 rounded-lg text-xs border cursor-pointer transition-colors ${
+                      checked
+                        ? 'bg-blue-50 border-blue-400 text-blue-950 font-semibold'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    } ${lockedByAttempts ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={lockedByAttempts}
+                      checked={checked}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? [...currentMultiDraft, opt.id]
+                          : currentMultiDraft.filter(id => id !== opt.id);
+                        setDraftMulti(prev => ({ ...prev, [q.id]: next }));
+                      }}
+                      className="rounded text-blue-600"
+                    />
+                    <span>{opt.text}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              disabled={lockedByAttempts || currentMultiDraft.length === 0}
+              onClick={() => handleAnswerPageQuestion(q, currentMultiDraft)}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg cursor-pointer disabled:cursor-not-allowed"
+            >
+              Comprobar selección
+            </button>
+          </div>
+        )}
+
         {q.type === 'true_false' && (
           <div className="flex gap-2.5">
             {[
@@ -732,7 +841,7 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                   type="button"
                   disabled={lockedByAttempts}
                   onClick={() => handleAnswerPageQuestion(q, item.val)}
-                  className={`flex-1 p-2.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                  className={`flex-1 p-2.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
                     isChosen
                       ? isCorrect
                         ? 'bg-emerald-100 border-emerald-400 text-emerald-900'
@@ -751,22 +860,80 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
           <div className="flex gap-2">
             <input
               type="text"
-              defaultValue={userAnswer || ''}
+              value={currentBlankDraft}
               disabled={lockedByAttempts}
+              onChange={(e) => setDraftBlank(prev => ({ ...prev, [q.id]: e.target.value }))}
               placeholder="Escribe tu respuesta y presiona Comprobar..."
-              id={`blank_input_${q.id}`}
-              className="flex-1 text-xs p-2 border border-slate-300 rounded-lg bg-white"
+              className="flex-1 text-xs p-2 border border-slate-300 rounded-lg bg-white disabled:opacity-60"
             />
             <button
               type="button"
-              disabled={lockedByAttempts}
-              onClick={() => {
-                const inp = document.getElementById(`blank_input_${q.id}`) as HTMLInputElement | null;
-                if (inp) handleAnswerPageQuestion(q, inp.value);
-              }}
-              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg cursor-pointer"
+              disabled={lockedByAttempts || !currentBlankDraft.trim()}
+              onClick={() => handleAnswerPageQuestion(q, currentBlankDraft)}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg cursor-pointer disabled:cursor-not-allowed"
             >
               Comprobar
+            </button>
+          </div>
+        )}
+
+        {q.type === 'numerical' && (
+          <div className="flex gap-2">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={currentBlankDraft}
+              disabled={lockedByAttempts}
+              onChange={(e) => setDraftBlank(prev => ({ ...prev, [q.id]: e.target.value }))}
+              placeholder="Ingresa un valor numérico (ej. 9.81)..."
+              className="flex-1 text-xs p-2 border border-slate-300 rounded-lg bg-white font-mono disabled:opacity-60"
+            />
+            <button
+              type="button"
+              disabled={lockedByAttempts || !currentBlankDraft.trim()}
+              onClick={() => handleAnswerPageQuestion(q, currentBlankDraft)}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg cursor-pointer disabled:cursor-not-allowed"
+            >
+              Comprobar
+            </button>
+          </div>
+        )}
+
+        {q.type === 'matching' && (
+          <div className="space-y-2.5">
+            <div className="space-y-2">
+              {q.matchingPairs?.map(pair => (
+                <div key={pair.id} className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-center p-2 bg-white rounded-lg border border-slate-200">
+                  <span className="text-xs font-semibold text-slate-800">{pair.left}</span>
+                  <select
+                    disabled={lockedByAttempts}
+                    value={currentMatchDraft[pair.id] || ''}
+                    onChange={(e) => {
+                      const next = { ...currentMatchDraft, [pair.id]: e.target.value };
+                      setDraftMatch(prev => ({ ...prev, [q.id]: next }));
+                    }}
+                    className="text-xs p-2 border border-slate-300 rounded-lg bg-slate-50 disabled:opacity-60"
+                  >
+                    <option value="">-- Selecciona correspondencia --</option>
+                    {shuffledRightOptions.map((rText, idx) => (
+                      <option key={`${pair.id}-${idx}`} value={rText}>
+                        {rText}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              disabled={
+                lockedByAttempts ||
+                !(q.matchingPairs || []).every(p => (currentMatchDraft[p.id] || '').trim().length > 0)
+              }
+              onClick={() => handleAnswerPageQuestion(q, currentMatchDraft)}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg cursor-pointer disabled:cursor-not-allowed"
+            >
+              Comprobar emparejamiento
             </button>
           </div>
         )}
@@ -782,7 +949,11 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                 ? '¡Correcto! Has asimilado este concepto.'
                 : 'Respuesta incorrecta.'}
             </div>
-            {q.explanation && <div className="mt-1 text-[11px]">{q.explanation}</div>}
+            {(q.explanationHtml || q.explanation) && (
+              <div className="mt-1 text-[11px]">
+                <SafeRichContent html={q.explanationHtml} fallbackText={q.explanation} />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1263,7 +1434,9 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                           <div
                             className="rich-content text-xs text-slate-800 leading-relaxed space-y-2"
                             dangerouslySetInnerHTML={{
-                              __html: MathService.renderFormulasInHtml((block as TextBlock).content)
+                              __html: MathService.renderFormulasInHtml(
+                                MediaService.hydrateRichHtmlForDisplay((block as TextBlock).content)
+                              )
                             }}
                           />
                         )}
@@ -1296,7 +1469,9 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                                 <div
                                   className="leading-relaxed"
                                   dangerouslySetInnerHTML={{
-                                    __html: MathService.renderFormulasInHtml((block as CalloutBlock).content)
+                                    __html: MathService.renderFormulasInHtml(
+                                      MediaService.hydrateRichHtmlForDisplay((block as CalloutBlock).content)
+                                    )
                                   }}
                                 />
                               </div>
@@ -1444,39 +1619,74 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                             return q ? renderInteractiveQuestion(q) : null;
                           })()}
 
-                        {block.type === 'media' && (
-                          <div className="my-4 text-center">
-                            {(block as MediaBlock).mediaType === 'image' ? (
-                              <div>
-                                {(block as MediaBlock).url ? (
-                                  <img
-                                    src={MediaService.resolveMediaUrl((block as MediaBlock).url)}
-                                    alt={(block as MediaBlock).altText || ''}
-                                    className="max-w-full rounded-xl mx-auto shadow-xs border border-slate-200"
-                                  />
-                                ) : (
-                                  <div className="p-8 bg-slate-100 rounded-xl text-slate-400 text-xs italic">
-                                    Imagen no configurada
+                        {block.type === 'media' &&
+                          (() => {
+                            const mb = block as MediaBlock;
+                            return (
+                              <div className="my-4 text-center">
+                                {mb.mediaType === 'image' && (
+                                  <div>
+                                    {mb.url ? (
+                                      <img
+                                        src={MediaService.resolveMediaUrl(mb.url)}
+                                        alt={mb.altText || ''}
+                                        className="max-w-full rounded-xl mx-auto shadow-xs border border-slate-200"
+                                      />
+                                    ) : (
+                                      <div className="p-8 bg-slate-100 rounded-xl text-slate-400 text-xs italic">
+                                        Imagen no configurada
+                                      </div>
+                                    )}
                                   </div>
                                 )}
-                                {(block as MediaBlock).caption && (
+                                {mb.mediaType === 'audio' && (
+                                  <div>
+                                    {mb.url ? (
+                                      <audio
+                                        controls
+                                        src={MediaService.resolveMediaUrl(mb.url)}
+                                        className="w-full"
+                                      />
+                                    ) : (
+                                      <div className="p-6 bg-slate-100 rounded-xl text-slate-400 text-xs italic">
+                                        Audio no configurado
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {mb.mediaType === 'video_file' && (
+                                  <div>
+                                    {mb.url ? (
+                                      <video
+                                        controls
+                                        src={MediaService.resolveMediaUrl(mb.url)}
+                                        className="w-full max-h-[380px] rounded-xl bg-black border border-slate-200"
+                                      />
+                                    ) : (
+                                      <div className="p-8 bg-slate-100 rounded-xl text-slate-400 text-xs italic">
+                                        Video local no configurado
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {mb.mediaType === 'video_embed' && (
+                                  <div className="relative pb-[56.25%] h-0 overflow-hidden rounded-xl shadow-xs border border-slate-200">
+                                    <iframe
+                                      src={mb.url}
+                                      className="absolute top-0 left-0 w-full h-full border-0"
+                                      allowFullScreen
+                                      title={mb.caption || 'Video'}
+                                    />
+                                  </div>
+                                )}
+                                {mb.caption && (
                                   <p className="text-xs text-slate-500 mt-2 font-medium">
-                                    {(block as MediaBlock).caption}
+                                    {mb.caption}
                                   </p>
                                 )}
                               </div>
-                            ) : (
-                              <div className="relative pb-[56.25%] h-0 overflow-hidden rounded-xl shadow-xs border border-slate-200">
-                                <iframe
-                                  src={(block as MediaBlock).url}
-                                  className="absolute top-0 left-0 w-full h-full border-0"
-                                  allowFullScreen
-                                  title={(block as MediaBlock).caption || 'Video'}
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
+                            );
+                          })()}
 
                         {block.type === 'math' && (
                           <div className="my-4 p-5 rounded-xl border border-teal-200 bg-teal-50/30 text-center">
@@ -1631,19 +1841,25 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                     {/* Specific Condition Status Banner */}
                     <div
                       className={`px-3.5 py-2 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
-                        currentConditionEval.met
+                        currentConditionEval.configError
+                          ? 'bg-rose-50 border-rose-300 text-rose-900'
+                          : currentConditionEval.met
                           ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                           : 'bg-amber-50 border-amber-200 text-amber-900'
                       }`}
                     >
                       <div className="flex items-center gap-2 font-semibold">
-                        {currentConditionEval.met ? (
+                        {currentConditionEval.configError ? (
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                        ) : currentConditionEval.met ? (
                           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                         ) : (
                           <Lock className="w-4 h-4 text-amber-600 shrink-0" />
                         )}
                         <span>
-                          {currentConditionEval.met
+                          {currentConditionEval.configError
+                            ? currentConditionEval.configError
+                            : currentConditionEval.met
                             ? currentConditionEval.completedMessage
                             : currentConditionEval.instruction}
                         </span>
@@ -1789,133 +2005,270 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                 </div>
               ) : isAssessmentActive && activeAssessment ? (
                 /* Assessment View */
-                <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
-                  <div className="pb-4 border-b border-slate-200">
-                    <span className="text-xs text-indigo-600 font-bold uppercase tracking-wider">
-                      Cuestionario Calificado SCORM
-                    </span>
-                    <h1 className="text-2xl font-extrabold text-slate-900 mt-1">
-                      {activeAssessment.title}
-                    </h1>
-                    <p className="text-xs text-slate-600 mt-1">{activeAssessment.description}</p>
-                    <div className="text-[11px] text-slate-500 mt-2">
-                      Mínimo requerido para aprobar:{' '}
-                      <strong className="text-emerald-600">{activeAssessment.passingScore}%</strong>
-                    </div>
-                  </div>
+                (() => {
+                  const prevRecord = progressState.completedAssessments?.[activeAssessment.id];
+                  const attemptsUsed = prevRecord?.attempts ?? (prevRecord ? 1 : 0);
+                  const maxAtt = activeAssessment.maxAttempts || 0;
+                  const attemptsExhausted = maxAtt > 0 && attemptsUsed >= maxAtt;
+                  const baseQuestions = CategoryService.getAssessmentEffectiveQuestions(
+                    activeAssessment,
+                    project
+                  );
+                  const orderedQuestions = activeAssessment.shuffleQuestions
+                    ? seededSort(baseQuestions, `q_${shuffleSeed}_${activeAssessment.id}`, q => q.id)
+                    : baseQuestions;
 
-                  <div className="space-y-5">
-                    {project.questionBank
-                      .filter(q => activeAssessment.questionIds.includes(q.id))
-                      .map((q, idx) => (
-                        <div
-                          key={q.id}
-                          className="p-4 rounded-xl border border-slate-200 bg-white space-y-3"
+                  return (
+                    <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
+                      <div className="pb-4 border-b border-slate-200">
+                        <span className="text-xs text-indigo-600 font-bold uppercase tracking-wider">
+                          Cuestionario Calificado SCORM
+                        </span>
+                        <h1 className="text-2xl font-extrabold text-slate-900 mt-1">
+                          {activeAssessment.title}
+                        </h1>
+                        <p className="text-xs text-slate-600 mt-1">{activeAssessment.description}</p>
+                        <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-2">
+                          <span>
+                            Mínimo requerido para aprobar:{' '}
+                            <strong className="text-emerald-600">{activeAssessment.passingScore}%</strong>
+                          </span>
+                          <span>·</span>
+                          <span>
+                            Intentos:{' '}
+                            <strong className="text-slate-700">
+                              {maxAtt === 0 ? `${attemptsUsed} (Ilimitados)` : `${attemptsUsed} / ${maxAtt}`}
+                            </strong>
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-5">
+                        {orderedQuestions.map((q, idx) => {
+                          const opts = q.options
+                            ? (activeAssessment.shuffleOptions
+                                ? seededSort(q.options, `opt_${shuffleSeed}_${q.id}`, o => o.id)
+                                : q.options)
+                            : [];
+                          const rightOptions = q.matchingPairs
+                            ? seededSort(q.matchingPairs.map(p => p.right), `match_${shuffleSeed}_${q.id}`, r => r)
+                            : [];
+                          const multiSel: string[] = Array.isArray(quizAnswers[q.id]) ? quizAnswers[q.id] : [];
+                          const matchSel: Record<string, string> =
+                            quizAnswers[q.id] && typeof quizAnswers[q.id] === 'object' && !Array.isArray(quizAnswers[q.id])
+                              ? quizAnswers[q.id]
+                              : {};
+                          const isQCorrect = assessmentSubmitted
+                            ? NavigationService.evaluateQuestionAnswer(q, quizAnswers[q.id])
+                            : null;
+
+                          return (
+                            <div
+                              key={q.id}
+                              className="p-4 rounded-xl border border-slate-200 bg-white space-y-3"
+                            >
+                              <div className="font-bold text-xs text-slate-900 flex items-start gap-2">
+                                <span className="text-slate-500 font-mono shrink-0">{idx + 1}.</span>
+                                <div className="flex-1 min-w-0">
+                                  <SafeRichContent html={q.promptHtml} fallbackText={q.prompt} />
+                                </div>
+                                <span className="font-mono text-slate-400 font-normal shrink-0">
+                                  ({q.points} pts)
+                                </span>
+                              </div>
+
+                              {q.type === 'multiple_choice' && (
+                                <div className="space-y-1.5">
+                                  {opts.map(opt => (
+                                    <label
+                                      key={opt.id}
+                                      className="flex items-center gap-2.5 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs cursor-pointer"
+                                    >
+                                      <input
+                                        type="radio"
+                                        disabled={attemptsExhausted}
+                                        name={`exam_q_${q.id}`}
+                                        checked={quizAnswers[q.id] === opt.id}
+                                        onChange={() =>
+                                          setQuizAnswers(prev => ({ ...prev, [q.id]: opt.id }))
+                                        }
+                                        className="text-blue-600"
+                                      />
+                                      <span>{opt.text}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+
+                              {q.type === 'multiple_response' && (
+                                <div className="space-y-1.5">
+                                  {opts.map(opt => {
+                                    const checked = multiSel.includes(opt.id);
+                                    return (
+                                      <label
+                                        key={opt.id}
+                                        className="flex items-center gap-2.5 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs cursor-pointer"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          disabled={attemptsExhausted}
+                                          checked={checked}
+                                          onChange={(e) => {
+                                            const next = e.target.checked
+                                              ? [...multiSel, opt.id]
+                                              : multiSel.filter(id => id !== opt.id);
+                                            setQuizAnswers(prev => ({ ...prev, [q.id]: next }));
+                                          }}
+                                          className="rounded text-blue-600"
+                                        />
+                                        <span>{opt.text}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {q.type === 'true_false' && (
+                                <div className="flex gap-3">
+                                  <label className="flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      disabled={attemptsExhausted}
+                                      name={`exam_q_${q.id}`}
+                                      checked={quizAnswers[q.id] === 'true'}
+                                      onChange={() =>
+                                        setQuizAnswers(prev => ({ ...prev, [q.id]: 'true' }))
+                                      }
+                                      className="text-blue-600"
+                                    />
+                                    <span>Verdadero</span>
+                                  </label>
+                                  <label className="flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      disabled={attemptsExhausted}
+                                      name={`exam_q_${q.id}`}
+                                      checked={quizAnswers[q.id] === 'false'}
+                                      onChange={() =>
+                                        setQuizAnswers(prev => ({ ...prev, [q.id]: 'false' }))
+                                      }
+                                      className="text-blue-600"
+                                    />
+                                    <span>Falso</span>
+                                  </label>
+                                </div>
+                              )}
+
+                              {q.type === 'fill_blank' && (
+                                <input
+                                  type="text"
+                                  disabled={attemptsExhausted}
+                                  value={quizAnswers[q.id] || ''}
+                                  onChange={(e) =>
+                                    setQuizAnswers(prev => ({ ...prev, [q.id]: e.target.value }))
+                                  }
+                                  placeholder="Escribe tu respuesta..."
+                                  className="w-full text-xs p-2 border border-slate-300 rounded-lg bg-slate-50 disabled:opacity-60"
+                                />
+                              )}
+
+                              {q.type === 'numerical' && (
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  disabled={attemptsExhausted}
+                                  value={quizAnswers[q.id] || ''}
+                                  onChange={(e) =>
+                                    setQuizAnswers(prev => ({ ...prev, [q.id]: e.target.value }))
+                                  }
+                                  placeholder="Ingresa un número (ej. 3.14)..."
+                                  className="w-full max-w-xs text-xs p-2 border border-slate-300 rounded-lg bg-slate-50 font-mono disabled:opacity-60"
+                                />
+                              )}
+
+                              {q.type === 'matching' && (
+                                <div className="space-y-2">
+                                  {q.matchingPairs?.map(pair => (
+                                    <div key={pair.id} className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-center p-2 bg-slate-50 rounded-lg border border-slate-200">
+                                      <span className="text-xs font-semibold text-slate-800">{pair.left}</span>
+                                      <select
+                                        disabled={attemptsExhausted}
+                                        value={matchSel[pair.id] || ''}
+                                        onChange={(e) => {
+                                          const next = { ...matchSel, [pair.id]: e.target.value };
+                                          setQuizAnswers(prev => ({ ...prev, [q.id]: next }));
+                                        }}
+                                        className="text-xs p-2 border border-slate-300 rounded-lg bg-white disabled:opacity-60"
+                                      >
+                                        <option value="">-- Selecciona correspondencia --</option>
+                                        {rightOptions.map((rText, rIdx) => (
+                                          <option key={`${pair.id}-${rIdx}`} value={rText}>
+                                            {rText}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {assessmentSubmitted && activeAssessment.showFeedback && (
+                                <div
+                                  className={`p-2.5 rounded-lg text-xs ${
+                                    isQCorrect ? 'bg-emerald-50 border border-emerald-200 text-emerald-900' : 'bg-rose-50 border border-rose-200 text-rose-900'
+                                  }`}
+                                >
+                                  <div className="font-bold">
+                                    {isQCorrect ? '✓ Respuesta correcta' : '✕ Respuesta incorrecta'}
+                                  </div>
+                                  {(q.explanationHtml || q.explanation) && (
+                                    <div className="mt-1 text-[11px]">
+                                      <SafeRichContent html={q.explanationHtml} fallbackText={q.explanation} />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <button
+                          type="button"
+                          disabled={attemptsExhausted}
+                          onClick={handleSubmitQuiz}
+                          className="px-6 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed rounded-lg shadow-sm transition-all cursor-pointer"
                         >
-                          <div className="font-bold text-xs text-slate-900">
-                            {idx + 1}. {q.prompt}{' '}
-                            <span className="font-mono text-slate-400 font-normal">
-                              ({q.points} pts)
+                          {attemptsExhausted
+                            ? 'Límite de intentos alcanzado'
+                            : 'Enviar Respuestas y Calificar en Moodle'}
+                        </button>
+
+                        {quizScore !== null && (
+                          <div
+                            className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 ${
+                              isPassed
+                                ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                                : 'bg-rose-50 border-rose-300 text-rose-800'
+                            }`}
+                          >
+                            {isPassed ? (
+                              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                            ) : (
+                              <AlertCircle className="w-5 h-5 text-rose-600" />
+                            )}
+                            <span>
+                              {isPassed
+                                ? `¡Aprobado con éxito! Calificación: ${quizScore}%`
+                                : `Reprobado con ${quizScore}% (requerido ${activeAssessment.passingScore}%)`}
                             </span>
                           </div>
-
-                          {q.type === 'multiple_choice' && (
-                            <div className="space-y-1.5">
-                              {q.options?.map(opt => (
-                                <label
-                                  key={opt.id}
-                                  className="flex items-center gap-2.5 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs cursor-pointer"
-                                >
-                                  <input
-                                    type="radio"
-                                    name={`exam_q_${q.id}`}
-                                    checked={quizAnswers[q.id] === opt.id}
-                                    onChange={() =>
-                                      setQuizAnswers(prev => ({ ...prev, [q.id]: opt.id }))
-                                    }
-                                    className="text-blue-600"
-                                  />
-                                  <span>{opt.text}</span>
-                                </label>
-                              ))}
-                            </div>
-                          )}
-
-                          {q.type === 'true_false' && (
-                            <div className="flex gap-3">
-                              <label className="flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold cursor-pointer">
-                                <input
-                                  type="radio"
-                                  name={`exam_q_${q.id}`}
-                                  checked={quizAnswers[q.id] === 'true'}
-                                  onChange={() =>
-                                    setQuizAnswers(prev => ({ ...prev, [q.id]: 'true' }))
-                                  }
-                                  className="text-blue-600"
-                                />
-                                <span>Verdadero</span>
-                              </label>
-                              <label className="flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold cursor-pointer">
-                                <input
-                                  type="radio"
-                                  name={`exam_q_${q.id}`}
-                                  checked={quizAnswers[q.id] === 'false'}
-                                  onChange={() =>
-                                    setQuizAnswers(prev => ({ ...prev, [q.id]: 'false' }))
-                                  }
-                                  className="text-blue-600"
-                                />
-                                <span>Falso</span>
-                              </label>
-                            </div>
-                          )}
-
-                          {q.type === 'fill_blank' && (
-                            <input
-                              type="text"
-                              value={quizAnswers[q.id] || ''}
-                              onChange={(e) =>
-                                setQuizAnswers(prev => ({ ...prev, [q.id]: e.target.value }))
-                              }
-                              placeholder="Escribe tu respuesta..."
-                              className="w-full text-xs p-2 border border-slate-300 rounded-lg bg-slate-50"
-                            />
-                          )}
-                        </div>
-                      ))}
-                  </div>
-
-                  <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <button
-                      type="button"
-                      onClick={handleSubmitQuiz}
-                      className="px-6 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-all cursor-pointer"
-                    >
-                      Enviar Respuestas y Calificar en Moodle
-                    </button>
-
-                    {quizScore !== null && (
-                      <div
-                        className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 ${
-                          isPassed
-                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                            : 'bg-rose-50 border-rose-300 text-rose-800'
-                        }`}
-                      >
-                        {isPassed ? (
-                          <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                        ) : (
-                          <AlertCircle className="w-5 h-5 text-rose-600" />
                         )}
-                        <span>
-                          {isPassed
-                            ? `¡Aprobado con éxito! Calificación: ${quizScore}%`
-                            : `Reprobado con ${quizScore}% (requerido ${activeAssessment.passingScore}%)`}
-                        </span>
                       </div>
-                    )}
-                  </div>
-                </div>
+                    </div>
+                  );
+                })()
               ) : null}
             </div>
           </div>

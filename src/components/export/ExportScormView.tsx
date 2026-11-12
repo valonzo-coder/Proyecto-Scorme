@@ -234,7 +234,7 @@ export const ExportScormView: React.FC<ExportScormViewProps> = ({
               <div className="flex items-center gap-3">
                 <FileText className="w-4 h-4 text-emerald-600" />
                 <div>
-                  <span className="font-mono font-bold text-xs text-slate-900">index.html</span>
+                  <span className="font-mono font-bold text-xs text-slate-900">{project.scormConfig.launchFileName || 'index.html'}</span>
                   <p className="text-[11px] text-slate-500">Lanzador principal SCO con reproductor responsivo y evaluaciones.</p>
                 </div>
               </div>
@@ -245,22 +245,22 @@ export const ExportScormView: React.FC<ExportScormViewProps> = ({
               <div className="flex items-center gap-3">
                 <Layers className="w-4 h-4 text-indigo-600" />
                 <div>
-                  <span className="font-mono font-bold text-xs text-slate-900">scorm_api.js</span>
-                  <p className="text-[11px] text-slate-500">Librería que detecta window.API (1.2) o window.API_1484_11 (2004).</p>
+                  <span className="font-mono font-bold text-xs text-slate-900">scorm_api.js &amp; navigation_engine.js</span>
+                  <p className="text-[11px] text-slate-500">Puente API SCORM (1.2 / 2004) y motor de reglas de navegación sin regresiones.</p>
                 </div>
               </div>
-              <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 px-2 py-0.5 rounded">API Bridge</span>
+              <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 px-2 py-0.5 rounded">Motor &amp; API</span>
             </div>
 
             <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Layers className="w-4 h-4 text-amber-600" />
                 <div>
-                  <span className="font-mono font-bold text-xs text-slate-900">course_data.js &amp; player.css</span>
-                  <p className="text-[11px] text-slate-500">Datos estructurados del curso y hoja de estilos autónoma sin CDN.</p>
+                  <span className="font-mono font-bold text-xs text-slate-900">course_data.js, player.css, vendor/katex/ &amp; media/</span>
+                  <p className="text-[11px] text-slate-500">Datos del curso, estilos offline, KaTeX local con fuentes y archivos multimedia incrustados.</p>
                 </div>
               </div>
-              <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 px-2 py-0.5 rounded">Recursos</span>
+              <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 px-2 py-0.5 rounded">Offline</span>
             </div>
 
             <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between">

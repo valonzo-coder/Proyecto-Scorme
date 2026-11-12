@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { CourseProject, ActiveSection, ProjectSyncStatus } from './types/scorm';
 import { StorageService } from './services/storageService';
 import { ProjectPackageService } from './services/projectPackageService';
+import { MediaService } from './services/mediaService';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ProjectInfoView } from './components/project/ProjectInfoView';
@@ -29,6 +30,11 @@ export default function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Restore persisted media blobs from IndexedDB on boot
+  useEffect(() => {
+    void MediaService.restoreProjectMedia(project.id);
+  }, []);
+
   // Auto-dismiss notifications after 5 seconds
   useEffect(() => {
     if (notification) {
@@ -39,9 +45,10 @@ export default function App() {
 
   // Update active project
   const handleUpdateProject = (updated: CourseProject) => {
-    setProject(updated);
+    const cleanProject = MediaService.sanitizeProjectMediaReferences(updated);
+    setProject(cleanProject);
     setSyncStatus('modified');
-    StorageService.saveActiveProject(updated, true);
+    StorageService.saveActiveProject(cleanProject, true);
   };
 
   // 1. Download Editable Project (.zip)

@@ -28,6 +28,7 @@ import {
   DEFAULT_LESSON_NAV_CONFIG,
   DEFAULT_PAGE_NAV_RULE
 } from '../../services/navigationService';
+import { CategoryService, isQuestionAutoGradable } from '../../services/categoryService';
 
 interface PageNavigationPanelProps {
   project: CourseProject;
@@ -117,7 +118,10 @@ export const PageNavigationPanel: React.FC<PageNavigationPanelProps> = ({
     if (type === 'scrolling') {
       nextRule.scrollThresholdPercent = 95;
     } else if (type === 'question') {
-      nextRule.questionId = checkpointQIds[0] || project.questionBank[0]?.id || '';
+      const firstCompatible = project.questionBank.find(
+        q => isQuestionAutoGradable(q) && !q.pendingAdaptation
+      );
+      nextRule.questionId = checkpointQIds[0] || firstCompatible?.id || '';
       nextRule.questionCriteria = 'correct';
       nextRule.maxAttempts = 0;
       nextRule.allowRetry = true;
@@ -300,12 +304,19 @@ export const PageNavigationPanel: React.FC<PageNavigationPanelProps> = ({
                           onChange={(e) => onUpdatePageRule({ ...rule, questionId: e.target.value })}
                           className="w-full text-xs p-2 border border-slate-300 rounded-lg bg-white text-slate-800"
                         >
-                          <option value="">-- Seleccionar pregunta --</option>
+                          <option value="">-- Seleccionar pregunta autocorregible --</option>
                           {project.questionBank.map(q => {
                             const onPage = checkpointQIds.includes(q.id);
+                            const compat = isQuestionAutoGradable(q) && !q.pendingAdaptation;
+                            const catLabel = CategoryService.getCategoryBreadcrumb(
+                              project.questionCategories || [],
+                              q.categoryId
+                            );
                             return (
-                              <option key={q.id} value={q.id}>
-                                {onPage ? '✓ [En página] ' : ''}{q.prompt.slice(0, 60)}
+                              <option key={q.id} value={q.id} disabled={!compat}>
+                                {onPage ? '✓ [En página] ' : ''}
+                                {compat ? '' : '[No autocorregible] '}
+                                [{catLabel}] {(q.name || q.prompt).slice(0, 50)}
                               </option>
                             );
                           })}
@@ -573,6 +584,19 @@ export const PageNavigationPanel: React.FC<PageNavigationPanelProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Configuration Error Alert (Fail-closed warning) */}
+            {previewEval.configError && (
+              <div className="p-3 rounded-xl border border-rose-300 bg-rose-50 space-y-1">
+                <span className="text-[10px] font-extrabold text-rose-800 uppercase tracking-wider flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Configuración Incompleta (Sección Bloqueada)</span>
+                </span>
+                <p className="text-xs text-rose-900 font-medium leading-snug">
+                  {previewEval.configError}
+                </p>
+              </div>
+            )}
 
             {/* Live Student Instruction Preview */}
             <div className="p-3 rounded-xl border border-blue-200 bg-blue-50/50 space-y-1">

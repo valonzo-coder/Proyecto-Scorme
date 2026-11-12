@@ -1,6 +1,7 @@
 import { CourseProject, QuestionItem, ProjectSyncStatus } from '../types/scorm';
 import { MediaService } from './mediaService';
 import { NavigationService, DEFAULT_LESSON_NAV_CONFIG } from './navigationService';
+import { CategoryService } from './categoryService';
 
 const SESSION_KEY = 'edubuilder_active_project_session';
 const STATUS_KEY = 'edubuilder_active_project_status';
@@ -359,6 +360,7 @@ export const INITIAL_DEFAULT_PROJECT: CourseProject = {
       ]
     }
   ],
+  questionCategories: [CategoryService.createDefaultCategory()],
   questionBank: INITIAL_QUESTIONS,
   assessments: [
     {
@@ -404,8 +406,9 @@ export class StorageService {
       const lastDownloaded = sessionStorage.getItem(LAST_DOWNLOAD_KEY);
 
       if (data) {
+        const parsed = NavigationService.migrateAndNormalizeProject(JSON.parse(data));
         return {
-          project: NavigationService.migrateAndNormalizeProject(JSON.parse(data)),
+          project: MediaService.sanitizeProjectMediaReferences(parsed),
           status: savedStatus,
           lastDownloaded
         };
@@ -426,7 +429,8 @@ export class StorageService {
    */
   static saveActiveProject(project: CourseProject, markAsModified: boolean = true): void {
     try {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(project));
+      const cleanProject = MediaService.sanitizeProjectMediaReferences(project);
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(cleanProject));
       if (markAsModified) {
         sessionStorage.setItem(STATUS_KEY, 'modified');
       }
@@ -439,8 +443,9 @@ export class StorageService {
    * Called when the user loads a project from a file.
    */
   static setLoadedProject(project: CourseProject): void {
+    const cleanProject = MediaService.sanitizeProjectMediaReferences(project);
     if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(project));
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(cleanProject));
       sessionStorage.setItem(STATUS_KEY, 'loaded');
       sessionStorage.removeItem(LAST_DOWNLOAD_KEY);
     }
@@ -468,12 +473,13 @@ export class StorageService {
     category: string = 'General',
     level: 'Principiante' | 'Intermedio' | 'Avanzado' = 'Intermedio'
   ): CourseProject {
-    MediaService.clearAll();
+    const projectId = `proj-${Date.now()}`;
+    MediaService.clearAll(projectId);
 
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'nuevo-curso';
 
     const newProject: CourseProject = {
-      id: `proj-${Date.now()}`,
+      id: projectId,
       title,
       description: description || 'Recurso educativo interactivo estructurado en unidades y lecciones.',
       category: category || 'General',
@@ -524,6 +530,7 @@ export class StorageService {
           ]
         }
       ],
+      questionCategories: [CategoryService.createDefaultCategory()],
       questionBank: [],
       assessments: [
         {

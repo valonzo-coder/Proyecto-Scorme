@@ -47,6 +47,13 @@ export const ProjectInfoView: React.FC<ProjectInfoViewProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [coverError, setCoverError] = React.useState<string | null>(null);
+  const [, setMediaRevision] = React.useState(() => MediaService.getRevision());
+
+  React.useEffect(() => {
+    return MediaService.subscribe(() => {
+      setMediaRevision(MediaService.getRevision());
+    });
+  }, []);
 
   const totalLessons = project.units.reduce((acc, u) => acc + u.lessons.length, 0);
   const totalPages = project.units.reduce(
@@ -61,11 +68,13 @@ export const ProjectInfoView: React.FC<ProjectInfoViewProps> = ({
     setCoverError(null);
 
     try {
-      const meta = await MediaService.addMediaFile(file);
-      onUpdateProject({
+      const meta = await MediaService.addMediaFile(file, project.id);
+      const updated = {
         ...project,
         coverImage: meta.relativePath
-      });
+      };
+      MediaService.pruneUnreferencedAssets(updated);
+      onUpdateProject(updated);
     } catch (err) {
       setCoverError('Error al procesar la imagen de portada.');
     }

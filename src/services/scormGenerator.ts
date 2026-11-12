@@ -2,6 +2,8 @@ import JSZip from 'jszip';
 import { CourseProject } from '../types/scorm';
 import { MediaService } from './mediaService';
 import { NavigationService } from './navigationService';
+import { initNavigationEngine } from './navigationEngine.js';
+import { KATEX_CSS, KATEX_JS, KATEX_AUTO_RENDER_JS, KATEX_FONTS_BASE64 } from './katexAssets';
 
 export interface ScormExportOptions {
   includeDebugConsole?: boolean;
@@ -10,66 +12,63 @@ export interface ScormExportOptions {
 
 export class ScormGenerator {
   /**
+   * Normalizes any raw identifier into a valid XML NCName (starts with letter or '_', only [A-Za-z0-9._-]).
+   */
+  private static toXmlNcName(raw: string, fallback: string = 'id_item'): string {
+    const cleaned = String(raw || '')
+      .trim()
+      .replace(/[^A-Za-z0-9._-]+/g, '_')
+      .replace(/^[^A-Za-z_]+/, '');
+    if (!cleaned) return fallback;
+    return cleaned.slice(0, 120);
+  }
+
+  /**
    * Generates the imsmanifest.xml content according to SCORM 1.2 or SCORM 2004 specification.
+   * Uses a compliant Single-SCO organization item so Moodle tracks one unified SCO without duplicated identifierref nodes.
    */
   static generateManifest(rawProject: CourseProject): string {
-    const project = NavigationService.migrateAndNormalizeProject(rawProject);
+    const project = MediaService.sanitizeProjectMediaReferences(
+      NavigationService.migrateAndNormalizeProject(rawProject)
+    );
     const config = project.scormConfig;
     const isScorm2004 = config.version.startsWith('2004');
-    const safeTitle = this.escapeXml(project.title);
-    const identifier = this.escapeXml(config.identifier || `course_${project.id}`);
-    const orgIdentifier = `${identifier}_org`;
+    const safeTitle = this.escapeXml(project.title || 'Curso SCORM');
+    const identifier = this.toXmlNcName(config.identifier || `course_${project.id}`, 'edubuilder_course');
+    const orgIdentifier = this.toXmlNcName(`${identifier}_org`, 'edubuilder_org');
+    const scoItemId = 'SCO_MAIN';
+    const launchHref = this.escapeXml(config.launchFileName || 'index.html');
 
-    // Flatten all lessons into item hierarchy
-    let itemsXml = '';
-    project.units.forEach((unit, uIdx) => {
-      const unitId = `unit_${unit.id || uIdx + 1}`;
-      const unitTitle = this.escapeXml(unit.title);
-      itemsXml += `      <item identifier="${unitId}">\n`;
-      itemsXml += `        <title>${unitTitle}</title>\n`;
-
-      unit.lessons.forEach((lesson, lIdx) => {
-        const lessonId = `lesson_${lesson.id || `${uIdx}_${lIdx}`}`;
-        const lessonTitle = this.escapeXml(lesson.title);
-        itemsXml += `        <item identifier="${lessonId}" identifierref="RES_SCO" isvisible="true">\n`;
-        itemsXml += `          <title>${lessonTitle}</title>\n`;
-        if (isScorm2004) {
-          itemsXml += `          <imsss:sequencing>\n`;
-          itemsXml += `            <imsss:deliveryControls tracked="true" completionSetByContent="true" objectiveSetByContent="true"/>\n`;
-          itemsXml += `          </imsss:sequencing>\n`;
-        } else {
-          itemsXml += `          <adlcp:masteryscore>${config.masteryScore}</adlcp:masteryscore>\n`;
-          itemsXml += `          <adlcp:datafromlms>${this.escapeXml(lesson.id)}</adlcp:datafromlms>\n`;
-        }
-        itemsXml += `        </item>\n`;
-      });
-
-      itemsXml += `      </item>\n`;
-    });
-
-    // Also include final exam item if present
-    if (project.assessments.length > 0) {
-      project.assessments.forEach((assessment, aIdx) => {
-        const examId = `assessment_${assessment.id || aIdx}`;
-        const examTitle = this.escapeXml(assessment.title);
-        itemsXml += `      <item identifier="${examId}" identifierref="RES_SCO" isvisible="true">\n`;
-        itemsXml += `        <title>${examTitle}</title>\n`;
-        if (isScorm2004) {
-          itemsXml += `        <imsss:sequencing>\n`;
-          itemsXml += `          <imsss:deliveryControls tracked="true" completionSetByContent="true" objectiveSetByContent="true"/>\n`;
-          itemsXml += `        </imsss:sequencing>\n`;
-        } else {
-          itemsXml += `        <adlcp:masteryscore>${assessment.passingScore || config.masteryScore}</adlcp:masteryscore>\n`;
-        }
-        itemsXml += `      </item>\n`;
-      });
+    let scoItemExtras = '';
+    if (isScorm2004) {
+      scoItemExtras = `        <imsss:sequencing>\n          <imsss:deliveryControls tracked="true" completionSetByContent="true" objectiveSetByContent="true"/>\n        </imsss:sequencing>\n`;
+    } else {
+      scoItemExtras = `        <adlcp:masteryscore>${Number.isFinite(config.masteryScore) ? config.masteryScore : 70}</adlcp:masteryscore>\n`;
     }
 
-    const mediaFilesXml = MediaService.getAllAssets()
+    const katexFontFilesXml = Object.keys(KATEX_FONTS_BASE64)
+      .sort()
+      .map(fontName => `      <file href="vendor/katex/fonts/${this.escapeXml(fontName)}"/>\n`)
+      .join('');
+
+    const mediaFilesXml = MediaService.getAllAssets(project)
       .map(item => `      <file href="${this.escapeXml(item.meta.relativePath)}"/>\n`)
       .join('');
 
+    const resourceFilesXml =
+      `      <file href="${launchHref}"/>\n` +
+      `      <file href="scorm_api.js"/>\n` +
+      `      <file href="navigation_engine.js"/>\n` +
+      `      <file href="course_data.js"/>\n` +
+      `      <file href="player.css"/>\n` +
+      `      <file href="vendor/katex/katex.min.css"/>\n` +
+      `      <file href="vendor/katex/katex.min.js"/>\n` +
+      `      <file href="vendor/katex/auto-render.min.js"/>\n` +
+      katexFontFilesXml +
+      mediaFilesXml;
+
     if (isScorm2004) {
+      const schemaVersionLabel = config.version === '2004_3rd' ? '2004 3rd Edition' : '2004 4th Edition';
       return `<?xml version="1.0" encoding="UTF-8"?>
 <!-- Generated by EduBuilder SCORM for Moodle LMS Compatibility -->
 <manifest identifier="${identifier}" version="1.0"
@@ -84,21 +83,19 @@ export class ScormGenerator {
                       http://www.imsglobal.org/xsd/imsss imsss_v1p0.xsd">
   <metadata>
     <schema>ADL SCORM</schema>
-    <schemaversion>2004 4th Edition</schemaversion>
+    <schemaversion>${schemaVersionLabel}</schemaversion>
   </metadata>
   <organizations default="${orgIdentifier}">
     <organization identifier="${orgIdentifier}">
       <title>${safeTitle}</title>
-${itemsXml}
+      <item identifier="${scoItemId}" identifierref="RES_SCO" isvisible="true">
+        <title>${safeTitle}</title>
+${scoItemExtras}      </item>
     </organization>
   </organizations>
   <resources>
-    <resource identifier="RES_SCO" type="webcontent" adlcp:scormType="sco" href="index.html">
-      <file href="index.html"/>
-      <file href="scorm_api.js"/>
-      <file href="course_data.js"/>
-      <file href="player.css"/>
-${mediaFilesXml}    </resource>
+    <resource identifier="RES_SCO" type="webcontent" adlcp:scormType="sco" href="${launchHref}">
+${resourceFilesXml}    </resource>
   </resources>
 </manifest>`;
     }
@@ -119,18 +116,29 @@ ${mediaFilesXml}    </resource>
   <organizations default="${orgIdentifier}">
     <organization identifier="${orgIdentifier}">
       <title>${safeTitle}</title>
-${itemsXml}
+      <item identifier="${scoItemId}" identifierref="RES_SCO" isvisible="true">
+        <title>${safeTitle}</title>
+${scoItemExtras}      </item>
     </organization>
   </organizations>
   <resources>
-    <resource identifier="RES_SCO" type="webcontent" adlcp:scormtype="sco" href="index.html">
-      <file href="index.html"/>
-      <file href="scorm_api.js"/>
-      <file href="course_data.js"/>
-      <file href="player.css"/>
-${mediaFilesXml}    </resource>
+    <resource identifier="RES_SCO" type="webcontent" adlcp:scormtype="sco" href="${launchHref}">
+${resourceFilesXml}    </resource>
   </resources>
 </manifest>`;
+  }
+
+  /**
+   * Generates standalone navigation_engine.js from the shared single-source-of-truth engine.
+   */
+  static generateNavigationEngineJs(): string {
+    return `// Auto-generated Shared Navigation & Tracking Engine by EduBuilder SCORM
+(function(window) {
+  'use strict';
+  var initNavigationEngine = ${initNavigationEngine.toString()};
+  window.EduNavigationEngine = initNavigationEngine();
+})(window);
+`;
   }
 
   /**
@@ -285,7 +293,9 @@ ${mediaFilesXml}    </resource>
    * Generates standalone course_data.js containing the normalized project object.
    */
   static generateCourseDataJs(rawProject: CourseProject): string {
-    const project = NavigationService.migrateAndNormalizeProject(rawProject);
+    const project = MediaService.sanitizeProjectMediaReferences(
+      NavigationService.migrateAndNormalizeProject(rawProject)
+    );
     const serialized = JSON.stringify(project, null, 2);
     return `// Auto-generated course definition by EduBuilder SCORM
 window.COURSE_DATA = ${serialized};
@@ -321,7 +331,7 @@ html, body {
 }
 
 body {
-  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   color: var(--text-main);
   background-color: var(--bg-page);
   line-height: 1.6;
@@ -1301,6 +1311,34 @@ body {
   color: #065f46;
 }
 
+.condition-banner.error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+
+.matching-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #ffffff;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.matching-select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #f8fafc;
+}
+
 .condition-progress-badge {
   font-family: monospace;
   font-size: 11px;
@@ -1468,7 +1506,9 @@ body {
    * single-page rendering, collapsible menu, 5 navigation conditions, and compact SCORM persistence.
    */
   static generateIndexHtml(rawProject: CourseProject): string {
-    const project = NavigationService.migrateAndNormalizeProject(rawProject);
+    const project = MediaService.sanitizeProjectMediaReferences(
+      NavigationService.migrateAndNormalizeProject(rawProject)
+    );
     const safeTitle = this.escapeXml(project.title);
 
     return `<!DOCTYPE html>
@@ -1478,10 +1518,7 @@ body {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${safeTitle} - EduBuilder SCORM Player</title>
   <link rel="stylesheet" href="player.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
 </head>
 <body>
   <div class="scorm-layout" id="app">
@@ -1509,15 +1546,20 @@ body {
   </div>
 
   <script src="scorm_api.js"></script>
+  <script src="navigation_engine.js"></script>
   <script src="course_data.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <script src="vendor/katex/katex.min.js"></script>
+  <script src="vendor/katex/auto-render.min.js"></script>
   <script>
     (function() {
       'use strict';
 
       var course = window.COURSE_DATA;
-      var isScorm2004 = (course.scormConfig && String(course.scormConfig.version).indexOf('2004') === 0);
+      var Engine = window.EduNavigationEngine;
+      var config = course.scormConfig || {};
+      var isScorm2004 = (config.version && String(config.version).indexOf('2004') === 0);
+      var sessionStartMs = Date.now();
+      var finishedOnce = false;
 
       // Initialize SCORM Bridge
       window.ScormBridge.init(course.id);
@@ -1525,12 +1567,8 @@ body {
         isScorm2004 = (window.ScormBridge.version === '2004');
       }
 
-      // Flatten lessons & build compact page index map (identical to NavigationService)
+      // Flatten lessons
       var allLessons = [];
-      var pageIndexMap = {};
-      var reversePageMap = {};
-      var pCounter = 0;
-
       (course.units || []).forEach(function(u) {
         (u.lessons || []).forEach(function(l) {
           if (!l.pages || l.pages.length === 0) {
@@ -1540,28 +1578,33 @@ body {
             l.navigationConfig = { mode: 'sequential', allowBack: true, allowSkip: false, showPageIndex: true, requireCompletionToAdvance: false };
           }
           allLessons.push({ unitTitle: u.title, lesson: l });
-          l.pages.forEach(function(p) {
-            pageIndexMap[p.id] = pCounter;
-            reversePageMap[pCounter] = p.id;
-            pCounter++;
-          });
         });
       });
 
       var firstLessonId = allLessons.length > 0 ? allLessons[0].lesson.id : '';
-      var firstPageId = (allLessons.length > 0 && allLessons[0].lesson.pages.length > 0) ? allLessons[0].lesson.pages[0].id : '';
 
-      var progressState = {
-        currentLessonId: firstLessonId,
-        currentPageId: firstPageId,
-        completedLessons: {},
-        completedAssessments: {},
-        pages: {}
-      };
+      // Restore from SCORM API (strictly respecting 1.2 vs 2004 CMI elements)
+      var savedLocation = isScorm2004
+        ? window.ScormBridge.getValue('cmi.location')
+        : window.ScormBridge.getValue('cmi.core.lesson_location');
+      var savedSuspend = window.ScormBridge.getValue('cmi.suspend_data');
+      var priorStatus12 = !isScorm2004 ? String(window.ScormBridge.getValue('cmi.core.lesson_status') || '').toLowerCase() : '';
+      var priorCompletion2004 = isScorm2004 ? String(window.ScormBridge.getValue('cmi.completion_status') || '').toLowerCase() : '';
+      var priorSuccess2004 = isScorm2004 ? String(window.ScormBridge.getValue('cmi.success_status') || '').toLowerCase() : '';
+
+      var progressState = Engine.deserializeSuspendData(savedSuspend, savedLocation, course);
+      var terminalStatus12 = (priorStatus12 === 'passed' || priorStatus12 === 'completed' || priorStatus12 === 'failed') ? priorStatus12 : '';
+      var terminalCompletion2004 = (priorCompletion2004 === 'completed') ? 'completed' : '';
+      var terminalSuccess2004 = (priorSuccess2004 === 'passed' || priorSuccess2004 === 'failed') ? priorSuccess2004 : '';
 
       var activeView = 'lesson'; // 'lesson' | 'assessment' | 'completed'
       var activeAssessmentId = (course.assessments && course.assessments[0]) ? course.assessments[0].id : '';
       var quizAnswers = {};
+      var assessmentSubmitted = false;
+      var assessmentLastResult = null;
+      var checkpointDraftMulti = {};
+      var checkpointDraftMatch = {};
+      var checkpointDraftBlank = {};
       var accordionOpen = {};
       var tabActive = {};
       var flashcardFlipped = {};
@@ -1588,141 +1631,112 @@ body {
         });
       });
 
-      function createEmptyRuntime() {
-        return {
-          visited: false,
-          completed: false,
-          scrollPercent: 0,
-          scrolledToBottom: false,
-          interactedIds: [],
-          openedResourceIds: [],
-          confirmedResourceIds: [],
-          questionAttempts: {},
-          questionAnswers: {},
-          questionCorrect: {}
-        };
-      }
-
       function getPageRuntime(pageId) {
         if (!progressState.pages[pageId]) {
-          progressState.pages[pageId] = createEmptyRuntime();
+          progressState.pages[pageId] = Engine.createEmptyPageRuntime();
         }
         return progressState.pages[pageId];
       }
 
-      // Restore from SCORM API (strictly respecting 1.2 vs 2004 CMI elements)
-      var savedLocation = isScorm2004
-        ? window.ScormBridge.getValue('cmi.location')
-        : window.ScormBridge.getValue('cmi.core.lesson_location');
-      var savedSuspend = window.ScormBridge.getValue('cmi.suspend_data');
-
-      if (savedLocation && typeof savedLocation === 'string') {
-        if (savedLocation.indexOf('|') !== -1) {
-          var parts = savedLocation.split('|');
-          if (parts[0]) progressState.currentLessonId = parts[0];
-          if (parts[1]) progressState.currentPageId = parts[1];
-        } else if (allLessons.some(function(it) { return it.lesson.id === savedLocation; })) {
-          progressState.currentLessonId = savedLocation;
-        }
+      function formatScorm12Time(ms) {
+        var totalSec = Math.max(0, Math.floor(ms / 1000));
+        var hours = Math.floor(totalSec / 3600);
+        var mins = Math.floor((totalSec % 3600) / 60);
+        var secs = totalSec % 60;
+        var hh = hours < 10 ? ('0' + hours) : String(hours);
+        var mm = mins < 10 ? ('0' + mins) : String(mins);
+        var ss = secs < 10 ? ('0' + secs) : String(secs);
+        return hh + ':' + mm + ':' + ss;
       }
 
-      if (savedSuspend) {
-        try {
-          var parsed = JSON.parse(savedSuspend);
-          if (parsed && parsed.v === 2) {
-            if (parsed.cl) progressState.currentLessonId = parsed.cl;
-            if (parsed.cp) progressState.currentPageId = parsed.cp;
-            if (Array.isArray(parsed.ls)) {
-              parsed.ls.forEach(function(id) { progressState.completedLessons[id] = true; });
-            }
-            if (parsed.as && typeof parsed.as === 'object') {
-              progressState.completedAssessments = parsed.as;
-            }
-            if (parsed.pg && typeof parsed.pg === 'object') {
-              Object.keys(parsed.pg).forEach(function(idxStr) {
-                var pageId = reversePageMap[Number(idxStr)];
-                var entry = parsed.pg[idxStr];
-                if (!pageId || !entry) return;
-                progressState.pages[pageId] = {
-                  visited: !!entry.v,
-                  completed: !!entry.c,
-                  scrollPercent: entry.s ? 100 : 0,
-                  scrolledToBottom: !!entry.s,
-                  interactedIds: Array.isArray(entry.i) ? entry.i : [],
-                  openedResourceIds: Array.isArray(entry.o) ? entry.o : [],
-                  confirmedResourceIds: Array.isArray(entry.f) ? entry.f : [],
-                  questionAnswers: entry.a || {},
-                  questionCorrect: entry.ok || {},
-                  questionAttempts: entry.at || {}
-                };
-              });
-            }
+      function formatScorm2004Duration(ms) {
+        var totalSec = Math.max(0, Math.floor(ms / 1000));
+        var hours = Math.floor(totalSec / 3600);
+        var mins = Math.floor((totalSec % 3600) / 60);
+        var secs = totalSec % 60;
+        return 'PT' + hours + 'H' + mins + 'M' + secs + 'S';
+      }
+
+      function seededSort(items, seedStr, getKey) {
+        function hash(s) {
+          var h = 2166136261;
+          for (var i = 0; i < s.length; i++) {
+            h ^= s.charCodeAt(i);
+            h = (h * 16777619) >>> 0;
           }
-        } catch(e) {}
-      }
-
-      function serializeSuspendData() {
-        var compactPages = {};
-        Object.keys(progressState.pages).forEach(function(pageId) {
-          var idx = pageIndexMap[pageId];
-          if (idx === undefined) return;
-          var rt = progressState.pages[pageId];
-          if (!rt.visited && !rt.completed && rt.interactedIds.length === 0 && Object.keys(rt.questionAnswers).length === 0) return;
-          var entry = {};
-          if (rt.visited) entry.v = 1;
-          if (rt.completed) entry.c = 1;
-          if (rt.scrolledToBottom) entry.s = 1;
-          if (rt.interactedIds.length > 0) entry.i = rt.interactedIds;
-          if (rt.openedResourceIds.length > 0) entry.o = rt.openedResourceIds;
-          if (rt.confirmedResourceIds.length > 0) entry.f = rt.confirmedResourceIds;
-          if (Object.keys(rt.questionAnswers).length > 0) entry.a = rt.questionAnswers;
-          if (Object.keys(rt.questionCorrect).length > 0) entry.ok = rt.questionCorrect;
-          if (Object.keys(rt.questionAttempts).length > 0) entry.at = rt.questionAttempts;
-          compactPages[String(idx)] = entry;
-        });
-
-        var payload = {
-          v: 2,
-          cl: progressState.currentLessonId,
-          cp: progressState.currentPageId,
-          ls: Object.keys(progressState.completedLessons).filter(function(k) { return progressState.completedLessons[k]; }),
-          as: progressState.completedAssessments,
-          pg: compactPages
-        };
-        var json = JSON.stringify(payload);
-        if (json.length > 4000) {
-          Object.keys(payload.pg).forEach(function(k) {
-            if (payload.pg[k].c) {
-              delete payload.pg[k].i;
-              delete payload.pg[k].at;
-            }
-          });
-          json = JSON.stringify(payload);
+          return h >>> 0;
         }
-        return json.slice(0, 4096);
+        return items.slice().sort(function(a, b) {
+          return hash(seedStr + ':' + getKey(a)) - hash(seedStr + ':' + getKey(b));
+        });
       }
 
-      function updateScormProgress(commitNow) {
+      function computeStatus12ForCompletion(hasAssessments, assessmentRecord, allLessonsDone) {
+        var criteria = config.completionCriteria || 'passed_incomplete';
+        if (assessmentRecord) {
+          var passed = !!assessmentRecord.passed;
+          if (criteria === 'completed_incomplete') return passed ? 'completed' : 'incomplete';
+          if (criteria === 'completed_failed') return passed ? 'completed' : 'failed';
+          return passed ? 'passed' : 'failed';
+        }
+        if (allLessonsDone && !hasAssessments) {
+          return 'completed';
+        }
+        return 'incomplete';
+      }
+
+      function updateScormProgress(commitNow, isExiting) {
         var total = allLessons.length;
         var completedCount = Object.keys(progressState.completedLessons).filter(function(k) { return progressState.completedLessons[k]; }).length;
         var percent = total > 0 ? Math.round((completedCount / total) * 100) : 0;
 
-        document.getElementById('overallProgressBar').style.width = percent + '%';
-        document.getElementById('overallProgressText').textContent = percent + '% completado';
+        var barEl = document.getElementById('overallProgressBar');
+        var txtEl = document.getElementById('overallProgressText');
+        if (barEl) barEl.style.width = percent + '%';
+        if (txtEl) txtEl.textContent = percent + '% completado';
 
         var locStr = (progressState.currentLessonId || '') + '|' + (progressState.currentPageId || '');
-        var suspendStr = serializeSuspendData();
+        var suspendStr = Engine.serializeSuspendData(progressState, course);
+        var reporting = config.reportingMode || 'score_and_status';
+        var exitBehavior = config.exitBehavior || 'suspend';
+        var hasAssessments = !!(course.assessments && course.assessments.length > 0);
+        var allLessonsDone = (total > 0 && completedCount >= total);
 
         window.ScormBridge.setValue('cmi.suspend_data', suspendStr);
+
         if (isScorm2004) {
           window.ScormBridge.setValue('cmi.location', locStr);
-          window.ScormBridge.setValue('cmi.completion_status', percent >= 100 ? 'completed' : 'incomplete');
+          if (reporting !== 'score_only') {
+            var nextComp = (allLessonsDone && !hasAssessments) || terminalCompletion2004 === 'completed' || Object.keys(progressState.completedAssessments).length > 0
+              ? 'completed'
+              : 'incomplete';
+            if (nextComp === 'completed') terminalCompletion2004 = 'completed';
+            window.ScormBridge.setValue('cmi.completion_status', terminalCompletion2004 || nextComp);
+            if (terminalSuccess2004) {
+              window.ScormBridge.setValue('cmi.success_status', terminalSuccess2004);
+            }
+          }
+          if (isExiting) {
+            window.ScormBridge.setValue('cmi.session_time', formatScorm2004Duration(Date.now() - sessionStartMs));
+            window.ScormBridge.setValue('cmi.exit', exitBehavior === 'finish' ? 'normal' : 'suspend');
+          }
         } else {
           window.ScormBridge.setValue('cmi.core.lesson_location', locStr);
-          if (percent >= 100 && (!course.assessments || course.assessments.length === 0)) {
-            window.ScormBridge.setValue('cmi.core.lesson_status', 'completed');
-          } else if (Object.keys(progressState.completedAssessments).length === 0) {
-            window.ScormBridge.setValue('cmi.core.lesson_status', percent >= 100 ? 'completed' : 'incomplete');
+          if (reporting !== 'score_only') {
+            if (terminalStatus12) {
+              // Never regress passed / completed / failed back to incomplete
+              window.ScormBridge.setValue('cmi.core.lesson_status', terminalStatus12);
+            } else {
+              var computed12 = computeStatus12ForCompletion(hasAssessments, null, allLessonsDone);
+              if (computed12 !== 'incomplete') {
+                terminalStatus12 = computed12;
+              }
+              window.ScormBridge.setValue('cmi.core.lesson_status', computed12);
+            }
+          }
+          if (isExiting) {
+            window.ScormBridge.setValue('cmi.core.session_time', formatScorm12Time(Date.now() - sessionStartMs));
+            window.ScormBridge.setValue('cmi.core.exit', exitBehavior === 'finish' ? '' : 'suspend');
           }
         }
         if (commitNow !== false) {
@@ -1730,205 +1744,12 @@ body {
         }
       }
 
-      function getPageInteractiveTargets(page) {
-        var targets = [];
-        (page.blocks || []).forEach(function(block) {
-          if (block.type === 'flashcards') {
-            targets.push({
-              blockId: block.id,
-              blockTitle: block.title || 'Tarjetas Flashcards',
-              items: (block.cards || []).map(function(c, i) { return { id: c.id, label: c.front || ('Tarjeta ' + (i + 1)) }; })
-            });
-          } else if (block.type === 'accordion') {
-            targets.push({
-              blockId: block.id,
-              blockTitle: block.title || 'Acordeón',
-              items: (block.items || []).map(function(it, i) { return { id: it.id, label: it.title || ('Elemento ' + (i + 1)) }; })
-            });
-          } else if (block.type === 'tabs') {
-            targets.push({
-              blockId: block.id,
-              blockTitle: block.title || 'Pestañas',
-              items: (block.tabs || []).map(function(t, i) { return { id: t.id, label: t.label || ('Pestaña ' + (i + 1)) }; })
-            });
-          }
-        });
-        return targets;
-      }
-
-      function evaluateSingleRule(rule, page, runtime) {
-        var type = (rule && rule.type) ? rule.type : 'button';
-
-        if (type === 'scrolling') {
-          var pct = Math.min(100, Math.max(0, Math.round(runtime.scrollPercent || 0)));
-          return {
-            met: !!runtime.scrolledToBottom,
-            instruction: 'Desplázate hasta el final del contenido para continuar.',
-            completedMessage: 'Has recorrido todo el contenido de esta sección. Ya puedes continuar.',
-            progressText: pct + '% leído'
-          };
-        }
-
-        if (type === 'question') {
-          var chkBlock = (page.blocks || []).find(function(b) { return b.type === 'checkpoint'; });
-          var qId = rule.questionId || (chkBlock ? chkBlock.questionId : '');
-          var question = (course.questionBank || []).find(function(q) { return q.id === qId; });
-          if (!qId || !question) {
-            return { met: true, instruction: '', completedMessage: 'Avance habilitado.', progressText: '' };
-          }
-          var criteria = rule.questionCriteria || 'correct';
-          var attempts = (runtime.questionAttempts && runtime.questionAttempts[qId]) || 0;
-          var ans = runtime.questionAnswers ? runtime.questionAnswers[qId] : undefined;
-          var hasAnswered = (ans !== undefined && ans !== '');
-          var isCorrect = !!(runtime.questionCorrect && runtime.questionCorrect[qId]);
-          var maxAttempts = rule.maxAttempts || 0;
-
-          if (criteria === 'answered') {
-            return {
-              met: hasAnswered,
-              instruction: 'Responde la pregunta de comprobación para desbloquear la siguiente sección.',
-              completedMessage: 'Respuesta registrada. Puedes continuar a la siguiente sección.',
-              progressText: hasAnswered ? 'Respondida' : 'Pendiente de responder'
-            };
-          }
-          var attText = maxAttempts > 0 ? (' (Intento ' + attempts + '/' + maxAttempts + ')') : '';
-          return {
-            met: isCorrect,
-            instruction: 'Responde correctamente la pregunta para desbloquear la siguiente sección.' + attText,
-            completedMessage: '¡Respuesta correcta! Sección desbloqueada para continuar.',
-            progressText: isCorrect ? 'Correcta' : (hasAnswered ? 'Incorrecta — intenta nuevamente' : 'Pendiente')
-          };
-        }
-
-        if (type === 'interaction') {
-          var targets = getPageInteractiveTargets(page);
-          var targetBlock = (rule.targetBlockId && rule.targetBlockId !== 'any')
-            ? targets.find(function(t) { return t.blockId === rule.targetBlockId; })
-            : null;
-          var candidateItems = targetBlock
-            ? targetBlock.items
-            : targets.reduce(function(acc, t) { return acc.concat(t.items); }, []);
-
-          if (candidateItems.length === 0) {
-            return { met: true, instruction: '', completedMessage: 'Avance disponible.', progressText: '' };
-          }
-
-          var interacted = runtime.interactedIds || [];
-          var iCriteria = rule.interactionCriteria || 'all_items';
-
-          if (iCriteria === 'any_one') {
-            var count1 = candidateItems.filter(function(it) { return interacted.indexOf(it.id) !== -1; }).length;
-            return {
-              met: count1 >= 1,
-              instruction: 'Explora o voltea al menos un elemento interactivo para continuar.',
-              completedMessage: 'Interacción completada. Ya puedes avanzar.',
-              progressText: Math.min(count1, 1) + ' de 1 requerido'
-            };
-          }
-
-          if (iCriteria === 'specific_count') {
-            var req = Math.min(candidateItems.length, Math.max(1, rule.requiredCount || 1));
-            var countN = candidateItems.filter(function(it) { return interacted.indexOf(it.id) !== -1; }).length;
-            return {
-              met: countN >= req,
-              instruction: 'Interactúa con al menos ' + req + ' elementos antes de continuar.',
-              completedMessage: 'Has explorado los elementos requeridos. Ya puedes continuar.',
-              progressText: Math.min(countN, req) + ' de ' + req + ' explorados'
-            };
-          }
-
-          var pool = (rule.requiredItemIds && rule.requiredItemIds.length > 0)
-            ? candidateItems.filter(function(it) { return rule.requiredItemIds.indexOf(it.id) !== -1; })
-            : candidateItems;
-          if (pool.length === 0) pool = candidateItems;
-          var doneCount = pool.filter(function(it) { return interacted.indexOf(it.id) !== -1; }).length;
-          return {
-            met: doneCount >= pool.length,
-            instruction: 'Voltea o explora todos los elementos requeridos para desbloquear la siguiente sección.',
-            completedMessage: 'Todos los elementos han sido explorados. Avance habilitado.',
-            progressText: doneCount + ' de ' + pool.length + ' completados'
-          };
-        }
-
-        if (type === 'resource') {
-          var resBlocks = (page.blocks || []).filter(function(b) { return b.type === 'resource'; });
-          var targetRes = rule.resourceBlockId
-            ? resBlocks.find(function(r) { return r.id === rule.resourceBlockId; })
-            : resBlocks[0];
-          if (!targetRes) {
-            return { met: true, instruction: '', completedMessage: 'Avance disponible.', progressText: '' };
-          }
-          var rCriteria = rule.resourceCriteria || 'confirm_review';
-          var isOpened = (runtime.openedResourceIds || []).indexOf(targetRes.id) !== -1;
-          var isConfirmed = (runtime.confirmedResourceIds || []).indexOf(targetRes.id) !== -1;
-          var rTitle = targetRes.title || targetRes.filename || 'recurso';
-
-          if (rCriteria === 'open_only') {
-            return {
-              met: isOpened,
-              instruction: 'Abre o descarga el archivo "' + rTitle + '" para continuar.',
-              completedMessage: 'Recurso abierto. Ya puedes continuar a la siguiente sección.',
-              progressText: isOpened ? 'Archivo abierto' : 'Pendiente de abrir'
-            };
-          }
-
-          if (rCriteria === 'confirm_activity') {
-            return {
-              met: isOpened && isConfirmed,
-              instruction: 'Abre el recurso "' + rTitle + '" y confirma que realizaste la actividad relacionada para continuar.',
-              completedMessage: 'Actividad confirmada. Ya puedes continuar.',
-              progressText: (isOpened && isConfirmed) ? 'Confirmado' : (isOpened ? 'Archivo abierto · Falta confirmar' : 'Pendiente de abrir y confirmar')
-            };
-          }
-
-          return {
-            met: isOpened && isConfirmed,
-            instruction: 'Abre el recurso "' + rTitle + '" y confirma su revisión para continuar.',
-            completedMessage: 'Revisión confirmada por el estudiante. Ya puedes continuar.',
-            progressText: (isOpened && isConfirmed) ? 'Revisión confirmada' : (isOpened ? 'Archivo abierto · Falta confirmar' : 'Pendiente de abrir y confirmar')
-          };
-        }
-
-        return {
-          met: true,
-          instruction: 'Presiona Siguiente para continuar.',
-          completedMessage: 'Listo para avanzar a la siguiente sección.',
-          progressText: ''
-        };
-      }
-
       function evaluatePageCondition(page, runtime) {
-        var rule = page.navigationRule || { type: 'button' };
-        var primary = evaluateSingleRule(rule, page, runtime);
-        if (rule.combinator && Array.isArray(rule.secondaryRules) && rule.secondaryRules.length > 0) {
-          var sec = rule.secondaryRules.map(function(sr) { return evaluateSingleRule(sr, page, runtime); });
-          if (rule.combinator === 'AND') {
-            primary.met = primary.met && sec.every(function(r) { return r.met; });
-          } else {
-            primary.met = primary.met || sec.some(function(r) { return r.met; });
-          }
-        }
-        return primary;
+        return Engine.evaluatePageCondition(page, runtime, course);
       }
 
       function canJumpToPage(lesson, targetIdx, currentIdx) {
-        var cfg = lesson.navigationConfig || { mode: 'sequential', allowBack: true, allowSkip: false };
-        var pages = lesson.pages || [];
-        if (targetIdx < 0 || targetIdx >= pages.length) return { allowed: false, reason: 'Página fuera de rango.' };
-        if (targetIdx === currentIdx) return { allowed: true };
-        if (cfg.mode === 'free') return { allowed: true };
-        if (targetIdx < currentIdx) {
-          if (!cfg.allowBack) return { allowed: false, reason: 'Esta lección no permite retroceder.' };
-          return { allowed: true };
-        }
-        if (cfg.allowSkip) return { allowed: true };
-        for (var i = 0; i < targetIdx; i++) {
-          var rt = getPageRuntime(pages[i].id);
-          if (!rt.completed) {
-            return { allowed: false, reason: 'Completa "' + pages[i].title + '" antes de avanzar a esta sección.' };
-          }
-        }
-        return { allowed: true };
+        return Engine.canJumpToPage(lesson, targetIdx, currentIdx, progressState.pages);
       }
 
       function getCurrentLessonObj() {
@@ -2113,7 +1934,7 @@ body {
         var userAnswer = runtime.questionAnswers ? runtime.questionAnswers[q.id] : undefined;
         var isCorrect = !!(runtime.questionCorrect && runtime.questionCorrect[q.id]);
         var attempts = (runtime.questionAttempts && runtime.questionAttempts[q.id]) || 0;
-        var isChecked = (userAnswer !== undefined && userAnswer !== '');
+        var isChecked = Engine.hasValidAnswer(q, userAnswer) && attempts > 0;
         var showFeedback = (rule.type === 'question') ? (rule.showFeedback !== false) : true;
         var maxAttempts = (rule.type === 'question') ? (rule.maxAttempts || 0) : 0;
         var locked = (maxAttempts > 0 && attempts >= maxAttempts) || (rule.type === 'question' && rule.allowRetry === false && attempts >= 1);
@@ -2125,18 +1946,36 @@ body {
           h += '    <span style="font-size:11px;font-family:monospace;background:#fff;padding:2px 8px;border:1px solid #bfdbfe;border-radius:5px;">Intentos: ' + attempts + '/' + maxAttempts + '</span>';
         }
         h += '  </div>';
-        h += '  <div class="question-prompt">' + escapeHtml(q.prompt) + '</div>';
+        if (q.promptHtml) {
+          h += '  <div class="question-prompt block-text">' + q.promptHtml + '</div>';
+        } else {
+          h += '  <div class="question-prompt">' + escapeHtml(q.prompt) + '</div>';
+        }
+
+        if (!Engine.isQuestionAutoGradable(q)) {
+          h += '<div class="feedback-box feedback-incorrect">Esta pregunta (' + escapeHtml(q.type) + ') no admite autocorrección automática en SCORM.</div>';
+        }
 
         if (q.type === 'multiple_choice') {
           (q.options || []).forEach(function(opt) {
             var isChosen = (userAnswer === opt.id);
             var cls = 'option-choice';
             if (isChosen) cls += isCorrect ? ' correct' : ' incorrect';
-            h += '<button type="button" class="' + cls + '" ' + ((locked && !isChosen) ? 'disabled' : '') + ' onclick="window.answerPageQuestion(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(opt.id) + '\\')">';
+            h += '<button type="button" class="' + cls + '" ' + (locked ? 'disabled' : '') + ' onclick="window.answerPageQuestion(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(opt.id) + '\\')">';
             h += '  <span>' + escapeHtml(opt.text) + '</span>';
             if (isChosen) h += '  <span>' + (isCorrect ? '✓' : '✕') + '</span>';
             h += '</button>';
           });
+        } else if (q.type === 'multiple_response') {
+          var multiDraft = checkpointDraftMulti[q.id] || (Array.isArray(userAnswer) ? userAnswer : []);
+          checkpointDraftMulti[q.id] = multiDraft.slice();
+          (q.options || []).forEach(function(opt) {
+            var isSel = multiDraft.indexOf(opt.id) !== -1;
+            h += '<label class="option-choice' + (isSel ? ' selected' : '') + '">';
+            h += '  <span style="display:flex;align-items:center;gap:10px;"><input type="checkbox" ' + (locked ? 'disabled' : '') + ' ' + (isSel ? 'checked' : '') + ' onchange="window.toggleCheckpointMulti(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(opt.id) + '\\', this.checked)"> ' + escapeHtml(opt.text) + '</span>';
+            h += '</label>';
+          });
+          h += '<button type="button" class="btn-primary" style="margin-top:6px;" ' + (locked ? 'disabled' : '') + ' onclick="window.submitMultiCheckpoint(\\'' + escapeAttr(q.id) + '\\')">Comprobar selección</button>';
         } else if (q.type === 'true_false') {
           h += '<div style="display:flex;gap:10px;">';
           [{ val: 'true', label: 'Verdadero' }, { val: 'false', label: 'Falso' }].forEach(function(it) {
@@ -2147,16 +1986,41 @@ body {
           });
           h += '</div>';
         } else if (q.type === 'fill_blank') {
+          var blankDraft = (checkpointDraftBlank[q.id] !== undefined) ? checkpointDraftBlank[q.id] : (typeof userAnswer === 'string' ? userAnswer : '');
           h += '<div style="display:flex;gap:8px;">';
-          h += '  <input type="text" id="blank_inp_' + escapeAttr(q.id) + '" value="' + escapeAttr(userAnswer || '') + '" ' + (locked ? 'disabled' : '') + ' placeholder="Escribe tu respuesta..." style="flex:1;padding:9px 12px;border:1px solid #cbd5e1;border-radius:7px;font-size:14px;">';
+          h += '  <input type="text" id="blank_inp_' + escapeAttr(q.id) + '" value="' + escapeAttr(blankDraft) + '" ' + (locked ? 'disabled' : '') + ' oninput="window.setCheckpointBlankDraft(\\'' + escapeAttr(q.id) + '\\', this.value)" placeholder="Escribe tu respuesta..." style="flex:1;padding:9px 12px;border:1px solid #cbd5e1;border-radius:7px;font-size:14px;">';
           h += '  <button type="button" class="btn-primary" ' + (locked ? 'disabled' : '') + ' onclick="window.submitBlankQuestion(\\'' + escapeAttr(q.id) + '\\')">Comprobar</button>';
           h += '</div>';
+        } else if (q.type === 'numerical') {
+          var numDraft = (checkpointDraftBlank[q.id] !== undefined) ? checkpointDraftBlank[q.id] : (typeof userAnswer === 'string' ? userAnswer : '');
+          h += '<div style="display:flex;gap:8px;">';
+          h += '  <input type="text" inputmode="decimal" id="blank_inp_' + escapeAttr(q.id) + '" value="' + escapeAttr(numDraft) + '" ' + (locked ? 'disabled' : '') + ' oninput="window.setCheckpointBlankDraft(\\'' + escapeAttr(q.id) + '\\', this.value)" placeholder="Ingresa un número (ej. 9.81)..." style="flex:1;padding:9px 12px;border:1px solid #cbd5e1;border-radius:7px;font-size:14px;font-family:monospace;">';
+          h += '  <button type="button" class="btn-primary" ' + (locked ? 'disabled' : '') + ' onclick="window.submitBlankQuestion(\\'' + escapeAttr(q.id) + '\\')">Comprobar</button>';
+          h += '</div>';
+        } else if (q.type === 'matching') {
+          var matchDraft = checkpointDraftMatch[q.id] || ((userAnswer && typeof userAnswer === 'object' && !Array.isArray(userAnswer)) ? userAnswer : {});
+          checkpointDraftMatch[q.id] = Object.assign({}, matchDraft);
+          var rightOpts = seededSort((q.matchingPairs || []).map(function(p) { return p.right; }), 'chk_' + q.id, function(r) { return r; });
+          (q.matchingPairs || []).forEach(function(pair) {
+            var selVal = matchDraft[pair.id] || '';
+            h += '<div class="matching-row">';
+            h += '  <span style="font-weight:600;color:#1e293b;">' + escapeHtml(pair.left) + '</span>';
+            h += '  <select class="matching-select" ' + (locked ? 'disabled' : '') + ' onchange="window.setCheckpointMatch(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(pair.id) + '\\', this.value)">';
+            h += '    <option value="">-- Selecciona correspondencia --</option>';
+            rightOpts.forEach(function(rText) {
+              h += '    <option value="' + escapeAttr(rText) + '" ' + (selVal === rText ? 'selected' : '') + '>' + escapeHtml(rText) + '</option>';
+            });
+            h += '  </select>';
+            h += '</div>';
+          });
+          h += '<button type="button" class="btn-primary" style="margin-top:6px;" ' + (locked ? 'disabled' : '') + ' onclick="window.submitMatchCheckpoint(\\'' + escapeAttr(q.id) + '\\')">Comprobar emparejamiento</button>';
         }
 
         if (isChecked && showFeedback) {
           h += '<div class="feedback-box ' + (isCorrect ? 'feedback-correct' : 'feedback-incorrect') + '">';
           h += '  <strong>' + (isCorrect ? '¡Correcto! Has asimilado este concepto.' : 'Respuesta incorrecta.') + '</strong>';
-          if (q.explanation) h += '<div style="margin-top:4px;">' + escapeHtml(q.explanation) + '</div>';
+          if (q.explanationHtml) h += '<div class="block-text" style="margin-top:4px;">' + q.explanationHtml + '</div>';
+          else if (q.explanation) h += '<div style="margin-top:4px;">' + escapeHtml(q.explanation) + '</div>';
           h += '</div>';
         }
 
@@ -2393,8 +2257,12 @@ body {
         if (navNotice) {
           html += '  <div class="nav-notice-banner">⚠️ ' + escapeHtml(navNotice) + '</div>';
         }
-        html += '  <div class="condition-banner ' + (evalRes.met ? 'unlocked' : 'locked') + '" id="conditionBanner">';
-        html += '    <span>' + (evalRes.met ? '✓ ' + escapeHtml(evalRes.completedMessage) : '🔒 ' + escapeHtml(evalRes.instruction)) + '</span>';
+        var bannerClass = evalRes.configError ? 'error' : (evalRes.met ? 'unlocked' : 'locked');
+        var bannerMessage = evalRes.configError
+          ? ('⚠️ ' + escapeHtml(evalRes.configError))
+          : (evalRes.met ? ('✓ ' + escapeHtml(evalRes.completedMessage)) : ('🔒 ' + escapeHtml(evalRes.instruction)));
+        html += '  <div class="condition-banner ' + bannerClass + '" id="conditionBanner">';
+        html += '    <span>' + bannerMessage + '</span>';
         if (evalRes.progressText) {
           html += '    <span class="condition-progress-badge" id="conditionProgressBadge">' + escapeHtml(evalRes.progressText) + '</span>';
         }
@@ -2421,7 +2289,7 @@ body {
 
         viewport.innerHTML = html;
 
-        // Render KaTeX formulas
+        // Render KaTeX formulas locally
         if (window.renderMathInElement) {
           try {
             window.renderMathInElement(document.getElementById('pageScrollArea'), {
@@ -2496,15 +2364,42 @@ body {
         }
       }
 
+      function getAssessmentEffectiveQuestions(exam) {
+        var snapMap = {};
+        (exam.questionSnapshots || []).forEach(function(s) {
+          if (s && s.bankQuestionId && s.question) {
+            snapMap[s.bankQuestionId] = s.question;
+          }
+        });
+        var bankMap = {};
+        (course.questionBank || []).forEach(function(q) {
+          bankMap[q.id] = q;
+        });
+        var out = [];
+        (exam.questionIds || []).forEach(function(qId) {
+          var q = snapMap[qId] || bankMap[qId];
+          if (q && Engine.isQuestionAutoGradable(q)) {
+            out.push(q);
+          }
+        });
+        return out;
+      }
+
       function renderAssessment(examId) {
         activeView = 'assessment';
         activeAssessmentId = examId;
         var exam = (course.assessments || []).find(function(a) { return a.id === examId; });
         if (!exam) return;
 
-        var questions = (course.questionBank || []).filter(function(q) {
-          return (exam.questionIds || []).indexOf(q.id) !== -1;
-        });
+        var baseQuestions = getAssessmentEffectiveQuestions(exam);
+        var questions = exam.shuffleQuestions
+          ? seededSort(baseQuestions, 'exam_q_' + exam.id, function(q) { return q.id; })
+          : baseQuestions;
+
+        var prevRec = progressState.completedAssessments[exam.id];
+        var attemptsUsed = (prevRec && typeof prevRec.attempts === 'number') ? prevRec.attempts : (prevRec ? 1 : 0);
+        var maxAtt = exam.maxAttempts || 0;
+        var attemptsExhausted = (maxAtt > 0 && attemptsUsed >= maxAtt);
 
         var viewport = document.getElementById('viewportContainer');
         var html = '<div class="page-scroll-area"><div class="page-inner-container">';
@@ -2512,42 +2407,93 @@ body {
         html += '  <div class="lesson-breadcrumbs">Evaluación Calificada SCORM</div>';
         html += '  <h2 class="page-main-title">' + escapeHtml(exam.title) + '</h2>';
         html += '  <p style="font-size:14px;color:#475569;margin-top:6px;">' + escapeHtml(exam.description) + '</p>';
-        html += '  <div style="font-size:13px;color:#64748b;margin-top:8px;">Puntaje mínimo: <strong>' + exam.passingScore + '%</strong> · Intentos: ' + (exam.maxAttempts === 0 ? 'Ilimitados' : exam.maxAttempts) + '</div>';
+        html += '  <div style="font-size:13px;color:#64748b;margin-top:8px;">Puntaje mínimo: <strong>' + exam.passingScore + '%</strong> · Intentos: <strong>' + (maxAtt === 0 ? (attemptsUsed + ' (Ilimitados)') : (attemptsUsed + ' / ' + maxAtt)) + '</strong></div>';
         html += '</div>';
 
         html += '<div class="quiz-wrapper" style="background:#fff;border-color:#e2e8f0;">';
         questions.forEach(function(q, qIdx) {
+          var opts = q.options ? (exam.shuffleOptions ? seededSort(q.options, 'opt_' + exam.id + '_' + q.id, function(o) { return o.id; }) : q.options) : [];
+          var rightOpts = q.matchingPairs ? seededSort(q.matchingPairs.map(function(p) { return p.right; }), 'match_' + exam.id + '_' + q.id, function(r) { return r; }) : [];
           html += '<div class="question-item-card">';
-          html += '  <div class="question-prompt">' + (qIdx + 1) + '. ' + escapeHtml(q.prompt) + ' <span style="font-size:12px;color:#94a3b8;font-weight:400;">(' + q.points + ' pts)</span></div>';
+          if (q.promptHtml) {
+            html += '  <div class="question-prompt block-text"><span style="margin-right:6px;">' + (qIdx + 1) + '.</span>' + q.promptHtml + ' <span style="font-size:12px;color:#94a3b8;font-weight:400;">(' + q.points + ' pts)</span></div>';
+          } else {
+            html += '  <div class="question-prompt">' + (qIdx + 1) + '. ' + escapeHtml(q.prompt) + ' <span style="font-size:12px;color:#94a3b8;font-weight:400;">(' + q.points + ' pts)</span></div>';
+          }
 
           if (q.type === 'multiple_choice') {
-            (q.options || []).forEach(function(opt) {
+            opts.forEach(function(opt) {
               var isSel = (quizAnswers[q.id] === opt.id);
               html += '<label class="option-choice' + (isSel ? ' selected' : '') + '">';
-              html += '  <span style="display:flex;align-items:center;gap:10px;"><input type="radio" name="q_' + escapeAttr(q.id) + '" value="' + escapeAttr(opt.id) + '" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(opt.id) + '\\')" ' + (isSel ? 'checked' : '') + '> ' + escapeHtml(opt.text) + '</span>';
+              html += '  <span style="display:flex;align-items:center;gap:10px;"><input type="radio" ' + (attemptsExhausted ? 'disabled' : '') + ' name="q_' + escapeAttr(q.id) + '" value="' + escapeAttr(opt.id) + '" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(opt.id) + '\\')" ' + (isSel ? 'checked' : '') + '> ' + escapeHtml(opt.text) + '</span>';
+              html += '</label>';
+            });
+          } else if (q.type === 'multiple_response') {
+            var curMulti = Array.isArray(quizAnswers[q.id]) ? quizAnswers[q.id] : [];
+            opts.forEach(function(opt) {
+              var isSel = (curMulti.indexOf(opt.id) !== -1);
+              html += '<label class="option-choice' + (isSel ? ' selected' : '') + '">';
+              html += '  <span style="display:flex;align-items:center;gap:10px;"><input type="checkbox" ' + (attemptsExhausted ? 'disabled' : '') + ' ' + (isSel ? 'checked' : '') + ' onchange="window.toggleExamMulti(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(opt.id) + '\\', this.checked)"> ' + escapeHtml(opt.text) + '</span>';
               html += '</label>';
             });
           } else if (q.type === 'true_false') {
             var isT = (quizAnswers[q.id] === 'true');
             var isF = (quizAnswers[q.id] === 'false');
             html += '<div style="display:flex;gap:10px;">';
-            html += '  <label class="option-choice' + (isT ? ' selected' : '') + '" style="flex:1;justify-content:center;"><input type="radio" name="q_' + escapeAttr(q.id) + '" value="true" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'true\\')" ' + (isT ? 'checked' : '') + '> Verdadero</label>';
-            html += '  <label class="option-choice' + (isF ? ' selected' : '') + '" style="flex:1;justify-content:center;"><input type="radio" name="q_' + escapeAttr(q.id) + '" value="false" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'false\\')" ' + (isF ? 'checked' : '') + '> Falso</label>';
+            html += '  <label class="option-choice' + (isT ? ' selected' : '') + '" style="flex:1;justify-content:center;"><input type="radio" ' + (attemptsExhausted ? 'disabled' : '') + ' name="q_' + escapeAttr(q.id) + '" value="true" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'true\\')" ' + (isT ? 'checked' : '') + '> Verdadero</label>';
+            html += '  <label class="option-choice' + (isF ? ' selected' : '') + '" style="flex:1;justify-content:center;"><input type="radio" ' + (attemptsExhausted ? 'disabled' : '') + ' name="q_' + escapeAttr(q.id) + '" value="false" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'false\\')" ' + (isF ? 'checked' : '') + '> Falso</label>';
             html += '</div>';
           } else if (q.type === 'fill_blank') {
             var curVal = quizAnswers[q.id] || '';
-            html += '<input type="text" style="width:100%;max-width:400px;padding:10px 14px;border:1px solid #cbd5e1;border-radius:7px;font-size:14px;" placeholder="Escribe tu respuesta..." value="' + escapeAttr(curVal) + '" oninput="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', this.value)">';
+            html += '<input type="text" ' + (attemptsExhausted ? 'disabled' : '') + ' style="width:100%;max-width:400px;padding:10px 14px;border:1px solid #cbd5e1;border-radius:7px;font-size:14px;" placeholder="Escribe tu respuesta..." value="' + escapeAttr(curVal) + '" oninput="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', this.value)">';
+          } else if (q.type === 'numerical') {
+            var curNum = quizAnswers[q.id] || '';
+            html += '<input type="text" inputmode="decimal" ' + (attemptsExhausted ? 'disabled' : '') + ' style="width:100%;max-width:260px;padding:10px 14px;border:1px solid #cbd5e1;border-radius:7px;font-size:14px;font-family:monospace;" placeholder="Ingresa un número..." value="' + escapeAttr(curNum) + '" oninput="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', this.value)">';
+          } else if (q.type === 'matching') {
+            var matchMap = (quizAnswers[q.id] && typeof quizAnswers[q.id] === 'object' && !Array.isArray(quizAnswers[q.id])) ? quizAnswers[q.id] : {};
+            (q.matchingPairs || []).forEach(function(pair) {
+              var selR = matchMap[pair.id] || '';
+              html += '<div class="matching-row">';
+              html += '  <span style="font-weight:600;color:#1e293b;">' + escapeHtml(pair.left) + '</span>';
+              html += '  <select class="matching-select" ' + (attemptsExhausted ? 'disabled' : '') + ' onchange="window.recordExamMatch(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(pair.id) + '\\', this.value)">';
+              html += '    <option value="">-- Selecciona correspondencia --</option>';
+              rightOpts.forEach(function(rText) {
+                html += '    <option value="' + escapeAttr(rText) + '" ' + (selR === rText ? 'selected' : '') + '>' + escapeHtml(rText) + '</option>';
+              });
+              html += '  </select>';
+              html += '</div>';
+            });
+          }
+
+          if (assessmentSubmitted && exam.showFeedback !== false) {
+            var qOk = Engine.evaluateQuestionAnswer(q, quizAnswers[q.id]);
+            html += '<div class="feedback-box ' + (qOk ? 'feedback-correct' : 'feedback-incorrect') + '">';
+            html += '  <strong>' + (qOk ? '✓ Respuesta correcta' : '✕ Respuesta incorrecta') + '</strong>';
+            if (q.explanationHtml) html += '<div class="block-text" style="margin-top:4px;">' + q.explanationHtml + '</div>';
+            else if (q.explanation) html += '<div style="margin-top:4px;">' + escapeHtml(q.explanation) + '</div>';
+            html += '</div>';
           }
           html += '</div>';
         });
 
         html += '<div style="margin-top:20px;display:flex;flex-wrap:wrap;align-items:center;gap:14px;">';
-        html += '  <button type="button" class="btn-primary" onclick="window.submitAssessment(\\'' + escapeAttr(exam.id) + '\\')">Calificar y Registrar en Moodle</button>';
-        html += '  <span id="examScoreResult" style="font-weight:700;font-size:14px;"></span>';
+        html += '  <button type="button" class="btn-primary" ' + (attemptsExhausted ? 'disabled' : '') + ' onclick="window.submitAssessment(\\'' + escapeAttr(exam.id) + '\\')">' + (attemptsExhausted ? 'Límite de intentos alcanzado' : 'Calificar y Registrar en Moodle') + '</button>';
+        html += '  <span id="examScoreResult" style="font-weight:700;font-size:14px;">' + (assessmentLastResult || '') + '</span>';
         html += '</div>';
         html += '</div></div></div>';
 
         viewport.innerHTML = html;
+        if (window.renderMathInElement) {
+          try {
+            window.renderMathInElement(viewport, {
+              delimiters: [
+                { left: '$$', right: '$$', display: true },
+                { left: '$', right: '$', display: false }
+              ],
+              throwOnError: false
+            });
+          } catch(err) {}
+        }
         renderSidebar();
       }
 
@@ -2611,7 +2557,7 @@ body {
         var rt = getPageRuntime(page.id);
         var evalRes = evaluatePageCondition(page, rt);
         if (!evalRes.met) {
-          navNotice = evalRes.instruction;
+          navNotice = evalRes.configError || evalRes.instruction;
           renderActivePage(true);
           return;
         }
@@ -2662,13 +2608,9 @@ body {
         var found = allLessons.find(function(it) { return it.lesson.id === lessonId; });
         if (!found) return;
         var cfg = found.lesson.navigationConfig || {};
-        var pending = [];
-        (found.lesson.pages || []).forEach(function(p) {
-          var rt = getPageRuntime(p.id);
-          if (!evaluatePageCondition(p, rt).met) pending.push(p.title);
-        });
-        if (cfg.requireCompletionToAdvance && pending.length > 0) {
-          navNotice = 'No se puede completar la lección todavía. Faltan requisitos en: ' + pending.join(', ');
+        var readyCheck = Engine.isLessonReadyForCompletion(found.lesson, progressState.pages, course);
+        if (cfg.requireCompletionToAdvance && !readyCheck.ready) {
+          navNotice = 'No se puede completar la lección todavía. Faltan requisitos en: ' + readyCheck.pendingPageTitles.join(', ');
           renderActivePage(true);
           return;
         }
@@ -2737,6 +2679,40 @@ body {
         renderActivePage(true);
       };
 
+      window.toggleCheckpointMulti = function(qId, optId, checked) {
+        var cur = checkpointDraftMulti[qId] || [];
+        if (checked) {
+          if (cur.indexOf(optId) === -1) cur.push(optId);
+        } else {
+          cur = cur.filter(function(id) { return id !== optId; });
+        }
+        checkpointDraftMulti[qId] = cur;
+      };
+
+      window.submitMultiCheckpoint = function(qId) {
+        var sel = checkpointDraftMulti[qId] || [];
+        if (sel.length === 0) {
+          navNotice = 'Selecciona al menos una opción antes de comprobar.';
+          renderActivePage(true);
+          return;
+        }
+        window.answerPageQuestion(qId, sel.slice());
+      };
+
+      window.setCheckpointBlankDraft = function(qId, val) {
+        checkpointDraftBlank[qId] = val;
+      };
+
+      window.setCheckpointMatch = function(qId, pairId, val) {
+        if (!checkpointDraftMatch[qId]) checkpointDraftMatch[qId] = {};
+        checkpointDraftMatch[qId][pairId] = val;
+      };
+
+      window.submitMatchCheckpoint = function(qId) {
+        var map = checkpointDraftMatch[qId] || {};
+        window.answerPageQuestion(qId, Object.assign({}, map));
+      };
+
       window.answerPageQuestion = function(qId, ansVal) {
         var found = getCurrentLessonObj();
         if (!found) return;
@@ -2755,15 +2731,13 @@ body {
           return;
         }
 
-        var isCorrect = false;
-        if (q.type === 'multiple_choice') {
-          var opt = (q.options || []).find(function(o) { return o.id === ansVal; });
-          isCorrect = !!(opt && opt.isCorrect);
-        } else if (q.type === 'true_false') {
-          isCorrect = (ansVal === (q.trueFalseAnswer ? 'true' : 'false'));
-        } else if (q.type === 'fill_blank') {
-          isCorrect = String(ansVal || '').trim().toLowerCase() === String(q.blankAnswer || '').trim().toLowerCase();
+        if (!Engine.hasValidAnswer(q, ansVal)) {
+          navNotice = 'Completa tu respuesta antes de comprobar.';
+          renderActivePage(true);
+          return;
         }
+
+        var isCorrect = Engine.evaluateQuestionAnswer(q, ansVal);
 
         rt.questionAnswers[qId] = ansVal;
         rt.questionCorrect[qId] = isCorrect;
@@ -2783,62 +2757,98 @@ body {
         quizAnswers[qId] = answerVal;
       };
 
+      window.toggleExamMulti = function(qId, optId, checked) {
+        var cur = Array.isArray(quizAnswers[qId]) ? quizAnswers[qId].slice() : [];
+        if (checked) {
+          if (cur.indexOf(optId) === -1) cur.push(optId);
+        } else {
+          cur = cur.filter(function(id) { return id !== optId; });
+        }
+        quizAnswers[qId] = cur;
+      };
+
+      window.recordExamMatch = function(qId, pairId, val) {
+        var cur = (quizAnswers[qId] && typeof quizAnswers[qId] === 'object' && !Array.isArray(quizAnswers[qId]))
+          ? Object.assign({}, quizAnswers[qId])
+          : {};
+        cur[pairId] = val;
+        quizAnswers[qId] = cur;
+      };
+
       window.submitAssessment = function(examId) {
         var exam = (course.assessments || []).find(function(a) { return a.id === examId; });
         if (!exam) return;
-        var questions = (course.questionBank || []).filter(function(q) {
-          return (exam.questionIds || []).indexOf(q.id) !== -1;
-        });
+
+        var prevRec = progressState.completedAssessments[exam.id];
+        var attemptsUsed = (prevRec && typeof prevRec.attempts === 'number') ? prevRec.attempts : (prevRec ? 1 : 0);
+        var maxAtt = exam.maxAttempts || 0;
+        if (maxAtt > 0 && attemptsUsed >= maxAtt) {
+          assessmentLastResult = '<span style="color:#dc2626;">Has alcanzado el límite de ' + maxAtt + ' intentos.</span>';
+          renderAssessment(examId);
+          return;
+        }
+
+        var questions = getAssessmentEffectiveQuestions(exam);
 
         var totalPoints = 0;
         var earnedPoints = 0;
         questions.forEach(function(q) {
-          totalPoints += (q.points || 10);
-          var userAns = quizAnswers[q.id];
-          if (q.type === 'multiple_choice') {
-            var correctOpt = (q.options || []).find(function(o) { return o.isCorrect; });
-            if (correctOpt && userAns === correctOpt.id) earnedPoints += (q.points || 10);
-          } else if (q.type === 'true_false') {
-            var expected = q.trueFalseAnswer ? 'true' : 'false';
-            if (userAns === expected) earnedPoints += (q.points || 10);
-          } else if (q.type === 'fill_blank') {
-            if (userAns && userAns.trim().toLowerCase() === (q.blankAnswer || '').trim().toLowerCase()) {
-              earnedPoints += (q.points || 10);
-            }
+          var pts = q.points || 10;
+          totalPoints += pts;
+          if (Engine.evaluateQuestionAnswer(q, quizAnswers[q.id])) {
+            earnedPoints += pts;
           }
         });
 
         var percentScore = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 100;
-        var passed = (percentScore >= (exam.passingScore || 70));
-        progressState.completedAssessments[exam.id] = { score: percentScore, passed: passed };
+        var passThreshold = (typeof exam.passingScore === 'number') ? exam.passingScore : 70;
+        var passed = (percentScore >= passThreshold);
+        progressState.completedAssessments[exam.id] = {
+          score: percentScore,
+          passed: passed,
+          attempts: attemptsUsed + 1
+        };
+        assessmentSubmitted = true;
 
-        var resEl = document.getElementById('examScoreResult');
+        var reporting = config.reportingMode || 'score_and_status';
+        var criteria = config.completionCriteria || 'passed_incomplete';
+
         if (passed) {
-          resEl.innerHTML = '<span style="color:#16a34a;">¡Aprobado con ' + percentScore + '%! (' + earnedPoints + '/' + totalPoints + ' pts)</span>';
+          assessmentLastResult = '<span style="color:#16a34a;">¡Aprobado con ' + percentScore + '%! (' + earnedPoints + '/' + totalPoints + ' pts)</span>';
+        } else {
+          assessmentLastResult = '<span style="color:#dc2626;">Reprobado con ' + percentScore + '% (requerido ' + passThreshold + '%)</span>';
+        }
+
+        if (reporting !== 'status_only') {
           if (isScorm2004) {
             window.ScormBridge.setValue('cmi.score.raw', percentScore);
             window.ScormBridge.setValue('cmi.score.scaled', (percentScore / 100).toFixed(2));
-            window.ScormBridge.setValue('cmi.completion_status', 'completed');
-            window.ScormBridge.setValue('cmi.success_status', 'passed');
           } else {
             window.ScormBridge.setValue('cmi.core.score.raw', percentScore);
             window.ScormBridge.setValue('cmi.core.score.min', '0');
             window.ScormBridge.setValue('cmi.core.score.max', '100');
-            window.ScormBridge.setValue('cmi.core.lesson_status', 'passed');
-          }
-        } else {
-          resEl.innerHTML = '<span style="color:#dc2626;">Reprobado con ' + percentScore + '% (requerido ' + exam.passingScore + '%)</span>';
-          if (isScorm2004) {
-            window.ScormBridge.setValue('cmi.score.raw', percentScore);
-            window.ScormBridge.setValue('cmi.success_status', 'failed');
-          } else {
-            window.ScormBridge.setValue('cmi.core.score.raw', percentScore);
-            window.ScormBridge.setValue('cmi.core.lesson_status', 'failed');
           }
         }
 
-        updateScormProgress(true);
-        renderSidebar();
+        if (reporting !== 'score_only') {
+          if (isScorm2004) {
+            terminalCompletion2004 = 'completed';
+            terminalSuccess2004 = passed ? 'passed' : 'failed';
+            window.ScormBridge.setValue('cmi.completion_status', 'completed');
+            window.ScormBridge.setValue('cmi.success_status', terminalSuccess2004);
+          } else {
+            var nextStatus12 = passed ? 'passed' : 'failed';
+            if (criteria === 'completed_incomplete') nextStatus12 = passed ? 'completed' : 'incomplete';
+            else if (criteria === 'completed_failed') nextStatus12 = passed ? 'completed' : 'failed';
+            if (nextStatus12 !== 'incomplete') {
+              terminalStatus12 = nextStatus12;
+            }
+            window.ScormBridge.setValue('cmi.core.lesson_status', nextStatus12);
+          }
+        }
+
+        updateScormProgress(true, false);
+        renderAssessment(examId);
       };
 
       var toggleBtnEl = document.getElementById('toggleSidebarBtn');
@@ -2868,6 +2878,13 @@ body {
         return escapeHtml(str).replace(/\\\\/g, '\\\\\\\\');
       }
 
+      function handleExit() {
+        if (finishedOnce) return;
+        finishedOnce = true;
+        updateScormProgress(true, true);
+        window.ScormBridge.finish();
+      }
+
       // Initial render
       applySidebarState(false);
       if (progressState.currentLessonId) {
@@ -2875,12 +2892,10 @@ body {
       } else {
         renderSidebar();
       }
-      updateScormProgress(false);
+      updateScormProgress(false, false);
 
-      window.addEventListener('beforeunload', function() {
-        updateScormProgress(true);
-        window.ScormBridge.finish();
-      });
+      window.addEventListener('pagehide', handleExit);
+      window.addEventListener('beforeunload', handleExit);
     })();
   </script>
 </body>
@@ -2927,44 +2942,64 @@ Soporte y compatibilidad:
 ========================================================================`;
   }
 
+  private static base64ToUint8Array(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
   /**
    * Builds the entire zip package blob ready for client download.
    */
   static async createScormZipBlob(rawProject: CourseProject): Promise<Blob> {
-    const project = NavigationService.migrateAndNormalizeProject(rawProject);
+    const project = MediaService.sanitizeProjectMediaReferences(
+      NavigationService.migrateAndNormalizeProject(rawProject)
+    );
     const zip = new JSZip();
+    const launchFileName = project.scormConfig?.launchFileName || 'index.html';
 
     // 1. imsmanifest.xml
     const manifestXml = this.generateManifest(project);
     zip.file('imsmanifest.xml', manifestXml);
 
-    // 2. index.html
+    // 2. index.html (or configured launch file)
     const indexHtml = this.generateIndexHtml(project);
-    zip.file('index.html', indexHtml);
+    zip.file(launchFileName, indexHtml);
 
     // 3. scorm_api.js
     const scormApiJs = this.generateScormApiJs();
     zip.file('scorm_api.js', scormApiJs);
 
-    // 4. course_data.js
+    // 4. navigation_engine.js (shared single-source-of-truth engine)
+    const navEngineJs = this.generateNavigationEngineJs();
+    zip.file('navigation_engine.js', navEngineJs);
+
+    // 5. course_data.js
     const courseDataJs = this.generateCourseDataJs(project);
     zip.file('course_data.js', courseDataJs);
 
-    // 5. player.css
+    // 6. player.css
     const playerCss = this.generatePlayerCss();
     zip.file('player.css', playerCss);
 
-    // 6. Media assets from in-memory MediaService
-    const mediaItems = MediaService.getAllAssets();
-    if (mediaItems.length > 0) {
-      const mediaFolder = zip.folder('media');
-      for (const item of mediaItems) {
-        const localName = item.meta.relativePath.replace(/^media\//, '');
-        mediaFolder?.file(localName, item.blob);
-      }
+    // 7. Offline local KaTeX CSS, JS, auto-render, and WOFF2 fonts
+    zip.file('vendor/katex/katex.min.css', KATEX_CSS);
+    zip.file('vendor/katex/katex.min.js', KATEX_JS);
+    zip.file('vendor/katex/auto-render.min.js', KATEX_AUTO_RENDER_JS);
+    for (const [fontName, b64] of Object.entries(KATEX_FONTS_BASE64)) {
+      zip.file(`vendor/katex/fonts/${fontName}`, this.base64ToUint8Array(b64));
     }
 
-    // 7. README_MOODLE.txt
+    // 8. Media assets strictly filtered & referenced by this project
+    const mediaItems = MediaService.getAllAssets(project);
+    for (const item of mediaItems) {
+      zip.file(item.meta.relativePath, item.blob);
+    }
+
+    // 9. README_MOODLE.txt
     const readme = this.generateMoodleInstructions(project);
     zip.file('README_MOODLE.txt', readme);
 

@@ -5,14 +5,32 @@ export type QuestionType =
   | 'multiple_response' 
   | 'true_false' 
   | 'fill_blank' 
-  | 'matching';
+  | 'matching'
+  | 'numerical'
+  | 'essay'
+  | 'description'
+  | 'cloze'
+  | 'unsupported';
 
 export type DifficultyLevel = 'Fácil' | 'Medio' | 'Difícil';
+
+export interface QuestionCategory {
+  id: string;
+  name: string;
+  parentId: string | null;
+  description?: string;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+  moodleOriginalPath?: string;
+}
 
 export interface QuestionOption {
   id: string;
   text: string;
   isCorrect: boolean;
+  fraction?: number;
+  feedback?: string;
 }
 
 export interface MatchingPair {
@@ -21,18 +39,60 @@ export interface MatchingPair {
   right: string;
 }
 
+export interface ShortAnswerVariant {
+  text: string;
+  fraction: number;
+  feedback?: string;
+}
+
+export interface NumericalAnswer {
+  value: number;
+  tolerance: number;
+  fraction: number;
+  feedback?: string;
+}
+
+export interface ClozeSubquestionInfo {
+  index: number;
+  weight: number;
+  subType: string;
+  rawBody: string;
+}
+
 export interface QuestionItem {
   id: string;
+  categoryId?: string;
+  name?: string;
   type: QuestionType;
   prompt: string;
+  promptHtml?: string;
   explanation: string;
+  explanationHtml?: string;
   points: number;
   difficulty: DifficultyLevel;
   tags: string[];
+  createdAt?: string;
+  updatedAt?: string;
   options?: QuestionOption[];
   trueFalseAnswer?: boolean;
   blankAnswer?: string;
+  acceptedAnswers?: ShortAnswerVariant[];
+  caseSensitive?: boolean;
+  numericalAnswers?: NumericalAnswer[];
   matchingPairs?: MatchingPair[];
+  penalty?: number;
+  shuffleAnswers?: boolean;
+  feedbackCorrectHtml?: string;
+  feedbackPartiallyCorrectHtml?: string;
+  feedbackIncorrectHtml?: string;
+  rawMoodleType?: string;
+  clozeData?: {
+    rawText: string;
+    subquestions: ClozeSubquestionInfo[];
+  };
+  importWarnings?: string[];
+  pendingAdaptation?: boolean;
+  externalMediaUrls?: string[];
 }
 
 export type BlockType = 
@@ -110,8 +170,8 @@ export interface FlashcardsBlock extends BaseBlock {
 
 export interface MediaBlock extends BaseBlock {
   type: 'media';
-  mediaType: 'image' | 'video_embed' | 'audio';
-  url: string; // can be relative path (e.g. "media/banner.jpg") or external embed URL
+  mediaType: 'image' | 'video_embed' | 'video_file' | 'audio';
+  url: string; // can be relative path (e.g. "media/imagenes/...") or external embed URL
   mediaAssetId?: string; // reference to local media asset if uploaded
   caption?: string;
   altText?: string;
@@ -247,8 +307,14 @@ export interface StudentProgressState {
   currentLessonId: string;
   currentPageId: string;
   completedLessons: Record<string, boolean>;
-  completedAssessments: Record<string, { score: number; passed: boolean }>;
+  completedAssessments: Record<string, { score: number; passed: boolean; attempts?: number }>;
   pages: Record<string, PageRuntimeProgress>;
+}
+
+export interface AssessmentQuestionSnapshot {
+  bankQuestionId: string;
+  capturedAt: string;
+  question: QuestionItem;
 }
 
 export interface AssessmentConfig {
@@ -258,6 +324,7 @@ export interface AssessmentConfig {
   type: 'lesson_quiz' | 'final_exam';
   passingScore: number;
   questionIds: string[];
+  questionSnapshots?: AssessmentQuestionSnapshot[];
   maxAttempts: number;
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
@@ -294,6 +361,7 @@ export interface CourseProject {
   createdAt: string;
   updatedAt: string;
   units: CourseUnit[];
+  questionCategories?: QuestionCategory[];
   questionBank: QuestionItem[];
   assessments: AssessmentConfig[];
   scormConfig: SCORMConfig;
