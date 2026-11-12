@@ -1,49 +1,58 @@
-import React, { useState } from 'react';
-import { 
-  Plus, 
-  Trash2, 
-  ChevronDown, 
-  ChevronUp, 
-  BookOpen, 
-  Layers, 
-  FileText, 
-  AlertCircle, 
-  LayoutList, 
-  FolderPlus,
+import React, { useState, useEffect } from 'react';
+import {
+  Plus,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
+  ChevronLeft,
+  BookOpen,
+  Layers,
+  FileText,
+  AlertCircle,
+  LayoutList,
   HelpCircle,
-  Clock,
   Sparkles,
-  CheckCircle2,
-  Edit2,
-  Copy,
-  Info,
   Image as ImageIcon,
   Upload,
   Sigma,
   Download,
   Paperclip,
-  BookMarked,
-  Lightbulb
+  MousePointerClick,
+  ArrowDownToLine,
+  FileCheck2,
+  PanelLeftOpen,
+  PanelLeftClose,
+  PanelRightOpen,
+  PanelRightClose,
+  Edit3,
+  AlertTriangle,
+  X
 } from 'lucide-react';
-import { 
-  CourseProject, 
-  CourseUnit, 
-  CourseLesson, 
-  ContentBlock, 
-  TextBlock, 
-  CalloutBlock, 
-  AccordionBlock, 
-  TabsBlock, 
-  FlashcardsBlock, 
-  CheckpointBlock, 
+import {
+  CourseProject,
+  CourseUnit,
+  CourseLesson,
+  CoursePage,
+  ContentBlock,
+  CalloutBlock,
+  AccordionBlock,
+  TabsBlock,
+  FlashcardsBlock,
+  CheckpointBlock,
   MediaBlock,
   MathBlock,
   ResourceBlock,
-  BlockType 
+  TextBlock,
+  BlockType,
+  PageNavigationRule,
+  NavigationConditionType
 } from '../../types/scorm';
 import { MediaService } from '../../services/mediaService';
 import { MathService } from '../../services/mathService';
+import { DEFAULT_LESSON_NAV_CONFIG, DEFAULT_PAGE_NAV_RULE } from '../../services/navigationService';
 import { RichTextEditor } from './RichTextEditor';
+import { PageNavigationPanel } from './PageNavigationPanel';
 
 interface ContentBuilderViewProps {
   project: CourseProject;
@@ -51,21 +60,97 @@ interface ContentBuilderViewProps {
   onOpenQuestionBank: () => void;
 }
 
+interface PendingDelete {
+  kind: 'unit' | 'lesson' | 'page';
+  unitId: string;
+  lessonId?: string;
+  pageId?: string;
+  title: string;
+}
+
+const RULE_BADGE_MAP: Record<NavigationConditionType, { label: string; icon: React.FC<{ className?: string }>; pill: string }> = {
+  button: { label: 'Botón', icon: MousePointerClick, pill: 'bg-blue-50 text-blue-700 border-blue-200' },
+  scrolling: { label: 'Scroll', icon: ArrowDownToLine, pill: 'bg-teal-50 text-teal-700 border-teal-200' },
+  question: { label: 'Pregunta', icon: HelpCircle, pill: 'bg-rose-50 text-rose-700 border-rose-200' },
+  interaction: { label: 'Interacción', icon: Sparkles, pill: 'bg-violet-50 text-violet-700 border-violet-200' },
+  resource: { label: 'Recurso', icon: FileCheck2, pill: 'bg-purple-50 text-purple-700 border-purple-200' }
+};
+
 export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
   project,
   onUpdateProject,
   onOpenQuestionBank
 }) => {
-  const [selectedUnitId, setSelectedUnitId] = useState<string>(project.units[0]?.id || '');
-  const [selectedLessonId, setSelectedLessonId] = useState<string>(
-    project.units[0]?.lessons[0]?.id || ''
-  );
+  const firstUnit = project.units[0];
+  const firstLesson = firstUnit?.lessons[0];
+  const firstPage = firstLesson?.pages?.[0];
 
-  // Active unit & lesson
+  const [selectedUnitId, setSelectedUnitId] = useState<string>(firstUnit?.id || '');
+  const [selectedLessonId, setSelectedLessonId] = useState<string>(firstLesson?.id || '');
+  const [selectedPageId, setSelectedPageId] = useState<string>(firstPage?.id || '');
+
+  const [expandedUnits, setExpandedUnits] = useState<Record<string, boolean>>(() => {
+    const map: Record<string, boolean> = {};
+    project.units.forEach(u => {
+      map[u.id] = true;
+    });
+    return map;
+  });
+
+  const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>(() => {
+    const map: Record<string, boolean> = {};
+    project.units.forEach(u =>
+      u.lessons.forEach(l => {
+        map[l.id] = true;
+      })
+    );
+    return map;
+  });
+
+  const [editingItem, setEditingItem] = useState<{ kind: 'unit' | 'lesson' | 'page'; id: string } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [inlineNotice, setInlineNotice] = useState<string | null>(null);
+  const [showLeftPanel, setShowLeftPanel] = useState<boolean>(() => {
+    try {
+      const saved = sessionStorage.getItem('edubuilder_editor_sidebar_open');
+      if (saved !== null) return saved === 'true';
+    } catch (e) {}
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      return false;
+    }
+    return true;
+  });
+  const [showRightPanel, setShowRightPanel] = useState<boolean>(true);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('edubuilder_editor_sidebar_open', String(showLeftPanel));
+    } catch (e) {}
+  }, [showLeftPanel]);
+
   const currentUnit = project.units.find(u => u.id === selectedUnitId) || project.units[0];
   const currentLesson = currentUnit?.lessons.find(l => l.id === selectedLessonId) || currentUnit?.lessons[0];
+  const currentPages = currentLesson?.pages || [];
+  const currentPageIndex = Math.max(
+    0,
+    currentPages.findIndex(p => p.id === selectedPageId)
+  );
+  const currentPage = currentPages[currentPageIndex] || currentPages[0];
 
-  // Helper to commit changes to project
+  // Keep selections synced if project changes externally
+  useEffect(() => {
+    if (currentUnit && currentUnit.id !== selectedUnitId) setSelectedUnitId(currentUnit.id);
+    if (currentLesson && currentLesson.id !== selectedLessonId) setSelectedLessonId(currentLesson.id);
+    if (currentPage && currentPage.id !== selectedPageId) setSelectedPageId(currentPage.id);
+  }, [project]);
+
+  useEffect(() => {
+    if (inlineNotice) {
+      const t = setTimeout(() => setInlineNotice(null), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [inlineNotice]);
+
   const updateUnits = (newUnits: CourseUnit[]) => {
     onUpdateProject({
       ...project,
@@ -73,13 +158,32 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
     });
   };
 
-  // Add unit
+  // Toggle accordion states in tree
+  const toggleUnitExpand = (unitId: string) => {
+    setExpandedUnits(prev => ({ ...prev, [unitId]: !prev[unitId] }));
+  };
+
+  const toggleLessonExpand = (lessonId: string) => {
+    setExpandedLessons(prev => ({ ...prev, [lessonId]: !prev[lessonId] }));
+  };
+
+  // Select a page from the tree
+  const handleSelectPage = (unitId: string, lessonId: string, pageId: string) => {
+    setSelectedUnitId(unitId);
+    setSelectedLessonId(lessonId);
+    setSelectedPageId(pageId);
+    setExpandedUnits(prev => ({ ...prev, [unitId]: true }));
+    setExpandedLessons(prev => ({ ...prev, [lessonId]: true }));
+  };
+
+  // Unit CRUD
   const handleAddUnit = () => {
     const newUnitId = `u-${Date.now()}`;
     const newLessonId = `les-${Date.now()}`;
+    const newPageId = `page-${Date.now()}`;
     const newUnit: CourseUnit = {
       id: newUnitId,
-      title: `Unidad ${project.units.length + 1}: Nueva Unidad Temática`,
+      title: `Unidad ${project.units.length + 1}: Nueva Unidad`,
       description: 'Breve descripción de los objetivos de esta unidad didáctica.',
       order: project.units.length + 1,
       lessons: [
@@ -89,56 +193,63 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
           summary: 'Resumen orientativo de la lección para el estudiante.',
           estimatedMinutes: 10,
           order: 1,
-          blocks: [
+          navigationConfig: { ...DEFAULT_LESSON_NAV_CONFIG },
+          pages: [
             {
-              id: `b-${Date.now()}-1`,
-              type: 'text',
-              title: 'Introducción al Tema',
-              content: '<p>Escribe aquí el contenido teórico o las instrucciones para el participante.</p>'
+              id: newPageId,
+              title: 'Página 1: Introducción',
+              order: 1,
+              navigationRule: { ...DEFAULT_PAGE_NAV_RULE },
+              blocks: [
+                {
+                  id: `b-${Date.now()}-1`,
+                  type: 'text',
+                  title: 'Introducción al Tema',
+                  content: '<p>Escribe aquí el contenido teórico o las instrucciones para el participante.</p>'
+                }
+              ]
             }
           ]
         }
       ]
     };
-    const updated = [...project.units, newUnit];
-    updateUnits(updated);
+    updateUnits([...project.units, newUnit]);
+    setExpandedUnits(prev => ({ ...prev, [newUnitId]: true }));
+    setExpandedLessons(prev => ({ ...prev, [newLessonId]: true }));
     setSelectedUnitId(newUnitId);
     setSelectedLessonId(newLessonId);
+    setSelectedPageId(newPageId);
   };
 
-  // Delete unit
-  const handleDeleteUnit = (unitId: string) => {
-    if (project.units.length <= 1) {
-      alert('El curso debe contener al menos una unidad didáctica.');
-      return;
-    }
-    const filtered = project.units.filter(u => u.id !== unitId);
-    updateUnits(filtered);
-    if (selectedUnitId === unitId) {
-      setSelectedUnitId(filtered[0].id);
-      setSelectedLessonId(filtered[0].lessons[0]?.id || '');
-    }
-  };
-
-  // Add lesson to current unit
+  // Lesson CRUD & Reorder
   const handleAddLesson = (unitId: string) => {
     const unitIndex = project.units.findIndex(u => u.id === unitId);
     if (unitIndex === -1) return;
 
     const unit = project.units[unitIndex];
     const newLessonId = `les-${Date.now()}`;
+    const newPageId = `page-${Date.now()}`;
     const newLesson: CourseLesson = {
       id: newLessonId,
-      title: `${unitIndex + 1}.${unit.lessons.length + 1} Nueva Lección Didáctica`,
+      title: `${unitIndex + 1}.${unit.lessons.length + 1} Nueva Lección`,
       summary: 'Objetivos específicos y desarrollo conceptual.',
       estimatedMinutes: 8,
       order: unit.lessons.length + 1,
-      blocks: [
+      navigationConfig: { ...DEFAULT_LESSON_NAV_CONFIG },
+      pages: [
         {
-          id: `b-${Date.now()}-1`,
-          type: 'text',
-          title: 'Desarrollo del Contenido',
-          content: '<p>Redacta aquí las explicaciones, ejemplos prácticos o conceptos clave.</p>'
+          id: newPageId,
+          title: 'Página 1: Desarrollo Inicial',
+          order: 1,
+          navigationRule: { ...DEFAULT_PAGE_NAV_RULE },
+          blocks: [
+            {
+              id: `b-${Date.now()}-1`,
+              type: 'text',
+              title: 'Desarrollo del Contenido',
+              content: '<p>Redacta aquí las explicaciones, ejemplos prácticos o conceptos clave.</p>'
+            }
+          ]
         }
       ]
     };
@@ -150,53 +261,247 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
     };
 
     updateUnits(newUnits);
+    setExpandedUnits(prev => ({ ...prev, [unitId]: true }));
+    setExpandedLessons(prev => ({ ...prev, [newLessonId]: true }));
     setSelectedUnitId(unitId);
     setSelectedLessonId(newLessonId);
+    setSelectedPageId(newPageId);
   };
 
-  // Delete lesson
-  const handleDeleteLesson = (unitId: string, lessonId: string) => {
+  const handleMoveLesson = (unitId: string, lessonIdx: number, direction: 'up' | 'down') => {
     const unitIndex = project.units.findIndex(u => u.id === unitId);
     if (unitIndex === -1) return;
-    const unit = project.units[unitIndex];
-    if (unit.lessons.length <= 1) {
-      alert('Cada unidad debe tener al menos una lección.');
-      return;
-    }
-    const filteredLessons = unit.lessons.filter(l => l.id !== lessonId);
+    const lessons = [...project.units[unitIndex].lessons];
+    const targetIdx = direction === 'up' ? lessonIdx - 1 : lessonIdx + 1;
+    if (targetIdx < 0 || targetIdx >= lessons.length) return;
+
+    const [moved] = lessons.splice(lessonIdx, 1);
+    lessons.splice(targetIdx, 0, moved);
+    const reordered = lessons.map((l, idx) => ({ ...l, order: idx + 1 }));
+
     const newUnits = [...project.units];
-    newUnits[unitIndex] = {
-      ...unit,
-      lessons: filteredLessons
-    };
+    newUnits[unitIndex] = { ...newUnits[unitIndex], lessons: reordered };
     updateUnits(newUnits);
-    if (selectedLessonId === lessonId) {
-      setSelectedLessonId(filteredLessons[0].id);
-    }
   };
 
-  // Update current lesson fields
-  const handleUpdateLessonMeta = (field: keyof CourseLesson, value: any) => {
-    if (!currentUnit || !currentLesson) return;
+  // Page CRUD & Reorder
+  const handleAddPage = (unitId: string, lessonId: string) => {
+    const newPageId = `page-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
     const newUnits = project.units.map(u => {
-      if (u.id !== currentUnit.id) return u;
+      if (u.id !== unitId) return u;
       return {
         ...u,
         lessons: u.lessons.map(l => {
-          if (l.id !== currentLesson.id) return l;
-          return { ...l, [field]: value };
+          if (l.id !== lessonId) return l;
+          const nextNum = l.pages.length + 1;
+          const newPage: CoursePage = {
+            id: newPageId,
+            title: `Página ${nextNum}`,
+            order: nextNum,
+            navigationRule: { ...DEFAULT_PAGE_NAV_RULE },
+            blocks: [
+              {
+                id: `b-${Date.now()}`,
+                type: 'text',
+                title: `Contenido de Página ${nextNum}`,
+                content: '<p>Agrega texto enriquecido, imágenes, fórmulas o actividades interactivas para esta sección.</p>'
+              }
+            ]
+          };
+          return {
+            ...l,
+            pages: [...l.pages, newPage]
+          };
+        })
+      };
+    });
+
+    updateUnits(newUnits);
+    setExpandedUnits(prev => ({ ...prev, [unitId]: true }));
+    setExpandedLessons(prev => ({ ...prev, [lessonId]: true }));
+    setSelectedUnitId(unitId);
+    setSelectedLessonId(lessonId);
+    setSelectedPageId(newPageId);
+  };
+
+  const handleMovePage = (unitId: string, lessonId: string, pageIdx: number, direction: 'up' | 'down') => {
+    const newUnits = project.units.map(u => {
+      if (u.id !== unitId) return u;
+      return {
+        ...u,
+        lessons: u.lessons.map(l => {
+          if (l.id !== lessonId) return l;
+          const pages = [...l.pages];
+          const targetIdx = direction === 'up' ? pageIdx - 1 : pageIdx + 1;
+          if (targetIdx < 0 || targetIdx >= pages.length) return l;
+          const [moved] = pages.splice(pageIdx, 1);
+          pages.splice(targetIdx, 0, moved);
+          return {
+            ...l,
+            pages: pages.map((p, idx) => ({ ...p, order: idx + 1 }))
+          };
         })
       };
     });
     updateUnits(newUnits);
   };
 
-  // Block management
-  const handleAddBlock = (type: BlockType) => {
+  // Delete confirmation handler
+  const requestDelete = (target: PendingDelete) => {
+    if (target.kind === 'unit' && project.units.length <= 1) {
+      setInlineNotice('El curso debe conservar al menos una unidad didáctica.');
+      return;
+    }
+    if (target.kind === 'lesson') {
+      const unit = project.units.find(u => u.id === target.unitId);
+      if (unit && unit.lessons.length <= 1) {
+        setInlineNotice('Cada unidad debe conservar al menos una lección.');
+        return;
+      }
+    }
+    if (target.kind === 'page') {
+      const unit = project.units.find(u => u.id === target.unitId);
+      const lesson = unit?.lessons.find(l => l.id === target.lessonId);
+      if (lesson && lesson.pages.length <= 1) {
+        setInlineNotice('Cada lección debe conservar al menos una página.');
+        return;
+      }
+    }
+    setPendingDelete(target);
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+
+    if (pendingDelete.kind === 'unit') {
+      const filtered = project.units
+        .filter(u => u.id !== pendingDelete.unitId)
+        .map((u, idx) => ({ ...u, order: idx + 1 }));
+      updateUnits(filtered);
+      if (selectedUnitId === pendingDelete.unitId && filtered[0]) {
+        const nextU = filtered[0];
+        const nextL = nextU.lessons[0];
+        const nextP = nextL?.pages[0];
+        setSelectedUnitId(nextU.id);
+        setSelectedLessonId(nextL?.id || '');
+        setSelectedPageId(nextP?.id || '');
+      }
+    } else if (pendingDelete.kind === 'lesson' && pendingDelete.lessonId) {
+      const newUnits = project.units.map(u => {
+        if (u.id !== pendingDelete.unitId) return u;
+        const filteredLessons = u.lessons
+          .filter(l => l.id !== pendingDelete.lessonId)
+          .map((l, idx) => ({ ...l, order: idx + 1 }));
+        if (selectedLessonId === pendingDelete.lessonId && filteredLessons[0]) {
+          setSelectedLessonId(filteredLessons[0].id);
+          setSelectedPageId(filteredLessons[0].pages[0]?.id || '');
+        }
+        return { ...u, lessons: filteredLessons };
+      });
+      updateUnits(newUnits);
+    } else if (pendingDelete.kind === 'page' && pendingDelete.lessonId && pendingDelete.pageId) {
+      const newUnits = project.units.map(u => {
+        if (u.id !== pendingDelete.unitId) return u;
+        return {
+          ...u,
+          lessons: u.lessons.map(l => {
+            if (l.id !== pendingDelete.lessonId) return l;
+            const filteredPages = l.pages
+              .filter(p => p.id !== pendingDelete.pageId)
+              .map((p, idx) => ({ ...p, order: idx + 1 }));
+            if (selectedPageId === pendingDelete.pageId && filteredPages[0]) {
+              setSelectedPageId(filteredPages[0].id);
+            }
+            return { ...l, pages: filteredPages };
+          })
+        };
+      });
+      updateUnits(newUnits);
+    }
+
+    setPendingDelete(null);
+  };
+
+  // Rename helpers
+  const renameUnit = (unitId: string, title: string) => {
+    updateUnits(project.units.map(u => (u.id === unitId ? { ...u, title } : u)));
+  };
+
+  const renameLesson = (unitId: string, lessonId: string, title: string) => {
+    updateUnits(
+      project.units.map(u =>
+        u.id !== unitId
+          ? u
+          : {
+              ...u,
+              lessons: u.lessons.map(l => (l.id === lessonId ? { ...l, title } : l))
+            }
+      )
+    );
+  };
+
+  const renamePage = (unitId: string, lessonId: string, pageId: string, title: string) => {
+    updateUnits(
+      project.units.map(u =>
+        u.id !== unitId
+          ? u
+          : {
+              ...u,
+              lessons: u.lessons.map(l =>
+                l.id !== lessonId
+                  ? l
+                  : {
+                      ...l,
+                      pages: l.pages.map(p => (p.id === pageId ? { ...p, title } : p))
+                    }
+              )
+            }
+      )
+    );
+  };
+
+  // Update active lesson metadata
+  const handleUpdateCurrentLessonMeta = (updates: Partial<CourseLesson>) => {
     if (!currentUnit || !currentLesson) return;
+    const newUnits = project.units.map(u => {
+      if (u.id !== currentUnit.id) return u;
+      return {
+        ...u,
+        lessons: u.lessons.map(l => (l.id === currentLesson.id ? { ...l, ...updates } : l))
+      };
+    });
+    updateUnits(newUnits);
+  };
+
+  // Update active page metadata / rule / blocks
+  const handleUpdateCurrentPage = (updates: Partial<CoursePage>) => {
+    if (!currentUnit || !currentLesson || !currentPage) return;
+    const newUnits = project.units.map(u => {
+      if (u.id !== currentUnit.id) return u;
+      return {
+        ...u,
+        lessons: u.lessons.map(l => {
+          if (l.id !== currentLesson.id) return l;
+          return {
+            ...l,
+            pages: l.pages.map(p => (p.id === currentPage.id ? { ...p, ...updates } : p))
+          };
+        })
+      };
+    });
+    updateUnits(newUnits);
+  };
+
+  const handleUpdatePageRule = (rule: PageNavigationRule) => {
+    handleUpdateCurrentPage({ navigationRule: rule });
+  };
+
+  // Block management inside currentPage
+  const handleAddBlock = (type: BlockType, presetQuestionId?: string) => {
+    if (!currentPage) return;
 
     let newBlock: ContentBlock;
-    const blockId = `blk-${Date.now()}`;
+    const blockId = `blk-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
 
     switch (type) {
       case 'text':
@@ -204,7 +509,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
           id: blockId,
           type: 'text',
           title: 'Concepto Clave',
-          content: '<p>Escribe aquí tu contenido educativo. Puedes incluir párrafos, negritas y listas didácticas.</p>'
+          content: '<p>Escribe aquí tu contenido educativo. Puedes incluir párrafos, negritas, tablas, enlaces y fórmulas.</p>'
         };
         break;
       case 'callout':
@@ -213,17 +518,17 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
           type: 'callout',
           variant: 'tip',
           title: 'Consejo Práctico',
-          content: 'Destaca aquí recomendaciones clave, advertencias o recordatorios importantes para el estudiante.'
+          content: 'Destaca aquí recomendaciones clave, ejemplos o preguntas de reflexión para el estudiante.'
         };
         break;
       case 'accordion':
         newBlock = {
           id: blockId,
           type: 'accordion',
-          title: 'Preguntas Frecuentes / Secciones Desplegables',
+          title: 'Secciones Desplegables',
           items: [
-            { id: `acc-${Date.now()}-1`, title: 'Elemento Desplegable 1', content: 'Explicación detallada o ejemplo práctico que se revela al hacer clic.' },
-            { id: `acc-${Date.now()}-2`, title: 'Elemento Desplegable 2', content: 'Información complementaria para evitar la saturación visual.' }
+            { id: `acc-${Date.now()}-1`, title: 'Elemento Desplegable 1', content: 'Explicación detallada que se revela al hacer clic.' },
+            { id: `acc-${Date.now()}-2`, title: 'Elemento Desplegable 2', content: 'Información complementaria para organizar la lectura.' }
           ]
         };
         break;
@@ -234,7 +539,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
           title: 'Perspectivas Temáticas',
           tabs: [
             { id: `tab-${Date.now()}-1`, label: 'Enfoque Teórico', content: 'Fundamentación científica y modelos de referencia.' },
-            { id: `tab-${Date.now()}-2`, label: 'Aplicación Práctica', content: 'Guía paso a paso y casos de estudio en el aula.' }
+            { id: `tab-${Date.now()}-2`, label: 'Aplicación Práctica', content: 'Guía paso a paso y casos de estudio.' }
           ]
         };
         break;
@@ -242,22 +547,23 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
         newBlock = {
           id: blockId,
           type: 'flashcards',
-          title: 'Tarjetas de Memoria y Auto-Evaluación',
+          title: 'Tarjetas de Memoria (Flashcards)',
           cards: [
             { id: `fc-${Date.now()}-1`, front: 'Término o Pregunta Clave', back: 'Definición precisa o respuesta sintetizada.', hint: 'Pista para recordar' },
             { id: `fc-${Date.now()}-2`, front: 'Segundo Concepto Relevante', back: 'Significado y contexto pedagógico.', hint: 'Relaciónalo con el tema anterior' }
           ]
         };
         break;
-      case 'checkpoint':
-        const firstQ = project.questionBank[0]?.id || '';
+      case 'checkpoint': {
+        const qId = presetQuestionId || project.questionBank[0]?.id || '';
         newBlock = {
           id: blockId,
           type: 'checkpoint',
-          title: 'Comprobación Formativa Rápida',
-          questionId: firstQ
+          title: 'Comprobación Formativa',
+          questionId: qId
         };
         break;
+      }
       case 'media':
         newBlock = {
           id: blockId,
@@ -284,7 +590,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
           id: blockId,
           type: 'resource',
           title: 'Documento o Material Descargable',
-          description: 'Descarga este recurso para profundizar en los contenidos de la lección.',
+          description: 'Descarga este recurso para profundizar en los contenidos de la sección.',
           filename: '',
           relativePath: ''
         } as ResourceBlock;
@@ -293,76 +599,205 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
         return;
     }
 
-    const updatedBlocks = [...currentLesson.blocks, newBlock];
-    handleUpdateLessonMeta('blocks', updatedBlocks);
+    handleUpdateCurrentPage({
+      blocks: [...currentPage.blocks, newBlock]
+    });
   };
 
   const handleUpdateBlock = (blockId: string, updatedBlock: ContentBlock) => {
-    if (!currentLesson) return;
-    const newBlocks = currentLesson.blocks.map(b => b.id === blockId ? updatedBlock : b);
-    handleUpdateLessonMeta('blocks', newBlocks);
+    if (!currentPage) return;
+    handleUpdateCurrentPage({
+      blocks: currentPage.blocks.map(b => (b.id === blockId ? updatedBlock : b))
+    });
   };
 
   const handleDeleteBlock = (blockId: string) => {
-    if (!currentLesson) return;
-    const newBlocks = currentLesson.blocks.filter(b => b.id !== blockId);
-    handleUpdateLessonMeta('blocks', newBlocks);
+    if (!currentPage) return;
+    handleUpdateCurrentPage({
+      blocks: currentPage.blocks.filter(b => b.id !== blockId)
+    });
   };
 
   const handleMoveBlock = (index: number, direction: 'up' | 'down') => {
-    if (!currentLesson) return;
+    if (!currentPage) return;
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= currentLesson.blocks.length) return;
-    const newBlocks = [...currentLesson.blocks];
+    if (targetIndex < 0 || targetIndex >= currentPage.blocks.length) return;
+    const newBlocks = [...currentPage.blocks];
     const [moved] = newBlocks.splice(index, 1);
     newBlocks.splice(targetIndex, 0, moved);
-    handleUpdateLessonMeta('blocks', newBlocks);
+    handleUpdateCurrentPage({ blocks: newBlocks });
   };
 
   return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-slate-100">
-      {/* Left Column: Course Structure Outline */}
-      <div className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0">
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-          <div>
-            <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Estructura Didáctica</h2>
-            <p className="text-[11px] text-slate-500">{project.units.length} unidades organizadas</p>
+    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-slate-100 relative">
+      {/* Inline Notice Banner */}
+      {inlineNotice && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-lg text-xs font-semibold flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>{inlineNotice}</span>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-2xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  Confirmar eliminación
+                </h3>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  ¿Estás seguro de eliminar{' '}
+                  {pendingDelete.kind === 'unit'
+                    ? 'la unidad'
+                    : pendingDelete.kind === 'lesson'
+                    ? 'la lección'
+                    : 'la página'}{' '}
+                  <strong className="text-slate-900">"{pendingDelete.title}"</strong>? Esta acción eliminará todo su contenido interno.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                className="px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                className="px-3.5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg cursor-pointer"
+              >
+                Sí, eliminar
+              </button>
+            </div>
           </div>
-          <button
-            onClick={handleAddUnit}
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Unidad</span>
-          </button>
+        </div>
+      )}
+
+      {/* Mobile Backdrop Overlay */}
+      {showLeftPanel && (
+        <div
+          onClick={() => setShowLeftPanel(false)}
+          className="md:hidden absolute inset-0 z-30 bg-slate-900/40 backdrop-blur-[1px] transition-opacity"
+          aria-hidden="true"
+        />
+      )}
+
+      {/* ====================================================================
+          ZONE 1: LEFT PANEL - HIERARCHICAL COURSE STRUCTURE (Units -> Lessons -> Pages)
+         ==================================================================== */}
+      <aside
+        aria-hidden={!showLeftPanel}
+        className={`bg-white border-r border-slate-200 flex flex-col shrink-0 transition-all duration-300 ease-in-out overflow-hidden absolute md:static inset-y-0 left-0 z-40 shadow-2xl md:shadow-none h-full ${
+          showLeftPanel
+            ? 'w-80 max-w-[85vw] translate-x-0 md:w-80 md:opacity-100 pointer-events-auto'
+            : 'w-80 max-w-[85vw] -translate-x-full md:translate-x-0 md:w-0 md:opacity-0 md:border-r-0 pointer-events-none'
+        }`}
+      >
+        <div className="w-80 max-w-[85vw] flex flex-col h-full">
+        <div className="p-3.5 border-b border-slate-200 flex items-center justify-between gap-2 bg-slate-50/70 shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider truncate">
+              Estructura del Curso
+            </h2>
+            <p className="text-[11px] text-slate-500">
+              {project.units.length} unidades · Árbol jerárquico
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleAddUnit}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Unidad</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowLeftPanel(false)}
+              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-200/70 rounded-lg transition-colors cursor-pointer"
+              title="Ocultar estructura del curso"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Units & Lessons list */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
           {project.units.map((unit, uIdx) => {
-            const isUnitSelected = selectedUnitId === unit.id;
-            return (
-              <div 
-                key={unit.id}
-                className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs"
-              >
-                {/* Unit Header */}
-                <div className={`p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 ${
-                  isUnitSelected ? 'bg-blue-50/50' : ''
-                }`}>
-                  <input
-                    type="text"
-                    value={unit.title}
-                    onChange={(e) => {
-                      const newUnits = [...project.units];
-                      newUnits[uIdx].title = e.target.value;
-                      updateUnits(newUnits);
-                    }}
-                    className="font-bold text-xs text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none flex-1 truncate"
-                  />
+            const isUnitExpanded = expandedUnits[unit.id] !== false;
+            const isEditingUnit = editingItem?.kind === 'unit' && editingItem.id === unit.id;
 
-                  <div className="flex items-center gap-1 shrink-0">
+            return (
+              <div
+                key={unit.id}
+                className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs"
+              >
+                {/* Unit Row */}
+                <div className="p-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleUnitExpand(unit.id)}
+                    className="p-0.5 text-slate-500 hover:text-slate-900 rounded cursor-pointer"
+                    title={isUnitExpanded ? 'Contraer unidad' : 'Expandir unidad'}
+                  >
+                    {isUnitExpanded ? (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+
+                  {isEditingUnit ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={unit.title}
+                      onChange={(e) => renameUnit(unit.id, e.target.value)}
+                      onBlur={() => setEditingItem(null)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === 'Escape') setEditingItem(null);
+                      }}
+                      className="flex-1 text-xs font-bold text-slate-900 bg-white border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none min-w-0"
+                    />
+                  ) : (
+                    <span
+                      onClick={() => toggleUnitExpand(unit.id)}
+                      onDoubleClick={() => setEditingItem({ kind: 'unit', id: unit.id })}
+                      className="flex-1 text-xs font-extrabold text-slate-800 truncate cursor-pointer"
+                      title={`${unit.title} (doble clic para renombrar)`}
+                    >
+                      {unit.title}
+                    </span>
+                  )}
+
+                  <div className="flex items-center gap-0.5 shrink-0">
                     <button
+                      type="button"
+                      onClick={() => setEditingItem({ kind: 'unit', id: unit.id })}
+                      title="Renombrar unidad"
+                      className="p-1 text-slate-400 hover:text-blue-600 rounded cursor-pointer"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleAddLesson(unit.id)}
                       title="Agregar lección a esta unidad"
                       className="p-1 text-blue-600 hover:bg-blue-100 rounded cursor-pointer"
@@ -371,120 +806,430 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                     </button>
                     {project.units.length > 1 && (
                       <button
-                        onClick={() => handleDeleteUnit(unit.id)}
+                        type="button"
+                        onClick={() =>
+                          requestDelete({
+                            kind: 'unit',
+                            unitId: unit.id,
+                            title: unit.title
+                          })
+                        }
                         title="Eliminar unidad"
                         className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-3 h-3" />
                       </button>
                     )}
                   </div>
                 </div>
 
-                {/* Lessons in Unit */}
-                <div className="p-1.5 space-y-1">
-                  {unit.lessons.map((lesson) => {
-                    const isLessonSelected = selectedLessonId === lesson.id;
-                    return (
-                      <div
-                        key={lesson.id}
-                        onClick={() => {
-                          setSelectedUnitId(unit.id);
-                          setSelectedLessonId(lesson.id);
-                        }}
-                        className={`p-2.5 rounded-lg text-xs cursor-pointer flex items-center justify-between gap-2 transition-all ${
-                          isLessonSelected
-                            ? 'bg-blue-600 text-white font-semibold shadow-xs'
-                            : 'text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <BookOpen className={`w-3.5 h-3.5 shrink-0 ${isLessonSelected ? 'text-white' : 'text-slate-400'}`} />
-                          <span className="truncate">{lesson.title}</span>
-                        </div>
+                {/* Lessons inside Unit */}
+                {isUnitExpanded && (
+                  <div className="p-2 space-y-2">
+                    {unit.lessons.map((lesson, lIdx) => {
+                      const isLessonExpanded = expandedLessons[lesson.id] !== false;
+                      const isLessonActive = currentLesson?.id === lesson.id;
+                      const isEditingLesson =
+                        editingItem?.kind === 'lesson' && editingItem.id === lesson.id;
 
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className={`text-[10px] font-mono px-1 rounded ${
-                            isLessonSelected ? 'text-blue-200' : 'text-slate-400'
-                          }`}>
-                            {lesson.blocks.length} blq
-                          </span>
-                          {unit.lessons.length > 1 && (
+                      return (
+                        <div
+                          key={lesson.id}
+                          className={`rounded-lg border transition-colors ${
+                            isLessonActive
+                              ? 'border-blue-200 bg-blue-50/30'
+                              : 'border-slate-200/80 bg-slate-50/40'
+                          }`}
+                        >
+                          {/* Lesson Header */}
+                          <div className="p-2 flex items-center gap-1.5">
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteLesson(unit.id, lesson.id);
-                              }}
-                              className={`p-1 rounded opacity-60 hover:opacity-100 ${
-                                isLessonSelected ? 'hover:bg-blue-700 text-white' : 'hover:bg-slate-200 text-slate-500'
-                              }`}
+                              type="button"
+                              onClick={() => toggleLessonExpand(lesson.id)}
+                              className="p-0.5 text-slate-400 hover:text-slate-700 cursor-pointer"
                             >
-                              <Trash2 className="w-3 h-3" />
+                              {isLessonExpanded ? (
+                                <ChevronDown className="w-3 h-3" />
+                              ) : (
+                                <ChevronRight className="w-3 h-3" />
+                              )}
                             </button>
+
+                            <BookOpen
+                              className={`w-3.5 h-3.5 shrink-0 ${
+                                isLessonActive ? 'text-blue-600' : 'text-slate-400'
+                              }`}
+                            />
+
+                            {isEditingLesson ? (
+                              <input
+                                autoFocus
+                                type="text"
+                                value={lesson.title}
+                                onChange={(e) => renameLesson(unit.id, lesson.id, e.target.value)}
+                                onBlur={() => setEditingItem(null)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === 'Escape') setEditingItem(null);
+                                }}
+                                className="flex-1 text-[11px] font-bold text-slate-900 bg-white border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none min-w-0"
+                              />
+                            ) : (
+                              <span
+                                onClick={() => {
+                                  const targetPage = lesson.pages?.[0]?.id || '';
+                                  handleSelectPage(unit.id, lesson.id, targetPage);
+                                }}
+                                onDoubleClick={() =>
+                                  setEditingItem({ kind: 'lesson', id: lesson.id })
+                                }
+                                className={`flex-1 text-[11px] font-bold truncate cursor-pointer ${
+                                  isLessonActive ? 'text-blue-900' : 'text-slate-700'
+                                }`}
+                                title={lesson.title}
+                              >
+                                {lesson.title}
+                              </span>
+                            )}
+
+                            <div className="flex items-center gap-0.5 shrink-0">
+                              <button
+                                type="button"
+                                disabled={lIdx === 0}
+                                onClick={() => handleMoveLesson(unit.id, lIdx, 'up')}
+                                title="Subir lección"
+                                className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-20 cursor-pointer"
+                              >
+                                <ChevronUp className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={lIdx === unit.lessons.length - 1}
+                                onClick={() => handleMoveLesson(unit.id, lIdx, 'down')}
+                                title="Bajar lección"
+                                className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-20 cursor-pointer"
+                              >
+                                <ChevronDown className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingItem({ kind: 'lesson', id: lesson.id })}
+                                title="Renombrar lección"
+                                className="p-0.5 text-slate-400 hover:text-blue-600 cursor-pointer"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleAddPage(unit.id, lesson.id)}
+                                title="Agregar página a esta lección"
+                                className="p-0.5 text-blue-600 hover:bg-blue-100 rounded cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                              {unit.lessons.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    requestDelete({
+                                      kind: 'lesson',
+                                      unitId: unit.id,
+                                      lessonId: lesson.id,
+                                      title: lesson.title
+                                    })
+                                  }
+                                  title="Eliminar lección"
+                                  className="p-0.5 text-slate-400 hover:text-rose-600 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Pages inside Lesson */}
+                          {isLessonExpanded && (
+                            <div className="pl-5 pr-1.5 pb-2 space-y-1">
+                              {(lesson.pages || []).map((page, pIdx) => {
+                                const isPageSelected = currentPage?.id === page.id;
+                                const isEditingPage =
+                                  editingItem?.kind === 'page' && editingItem.id === page.id;
+                                const ruleType = page.navigationRule?.type || 'button';
+                                const badge = RULE_BADGE_MAP[ruleType] || RULE_BADGE_MAP.button;
+                                const BadgeIcon = badge.icon;
+
+                                return (
+                                  <div
+                                    key={page.id}
+                                    onClick={() => handleSelectPage(unit.id, lesson.id, page.id)}
+                                    className={`group px-2 py-1.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer transition-all text-[11px] ${
+                                      isPageSelected
+                                        ? 'bg-blue-600 text-white font-bold shadow-xs'
+                                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200/70'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                      <BadgeIcon
+                                        className={`w-3 h-3 shrink-0 ${
+                                          isPageSelected ? 'text-blue-200' : 'text-slate-400'
+                                        }`}
+                                      />
+                                      {isEditingPage ? (
+                                        <input
+                                          autoFocus
+                                          type="text"
+                                          value={page.title}
+                                          onClick={(e) => e.stopPropagation()}
+                                          onChange={(e) =>
+                                            renamePage(unit.id, lesson.id, page.id, e.target.value)
+                                          }
+                                          onBlur={() => setEditingItem(null)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === 'Escape')
+                                              setEditingItem(null);
+                                          }}
+                                          className="flex-1 text-[11px] font-bold text-slate-900 bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none min-w-0"
+                                        />
+                                      ) : (
+                                        <span
+                                          onDoubleClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingItem({ kind: 'page', id: page.id });
+                                          }}
+                                          className="truncate"
+                                        >
+                                          {page.title}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-0.5 shrink-0">
+                                      <span
+                                        className={`text-[9px] px-1 rounded font-mono ${
+                                          isPageSelected
+                                            ? 'bg-blue-700 text-blue-100'
+                                            : 'bg-slate-100 text-slate-500'
+                                        }`}
+                                        title={`${page.blocks.length} bloques · Condición: ${badge.label}`}
+                                      >
+                                        {page.blocks.length}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        disabled={pIdx === 0}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleMovePage(unit.id, lesson.id, pIdx, 'up');
+                                        }}
+                                        title="Subir página"
+                                        className={`p-0.5 rounded disabled:opacity-20 cursor-pointer ${
+                                          isPageSelected
+                                            ? 'text-blue-100 hover:bg-blue-700'
+                                            : 'text-slate-400 hover:text-slate-700'
+                                        }`}
+                                      >
+                                        <ChevronUp className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={pIdx === lesson.pages.length - 1}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleMovePage(unit.id, lesson.id, pIdx, 'down');
+                                        }}
+                                        title="Bajar página"
+                                        className={`p-0.5 rounded disabled:opacity-20 cursor-pointer ${
+                                          isPageSelected
+                                            ? 'text-blue-100 hover:bg-blue-700'
+                                            : 'text-slate-400 hover:text-slate-700'
+                                        }`}
+                                      >
+                                        <ChevronDown className="w-3 h-3" />
+                                      </button>
+                                      {lesson.pages.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            requestDelete({
+                                              kind: 'page',
+                                              unitId: unit.id,
+                                              lessonId: lesson.id,
+                                              pageId: page.id,
+                                              title: page.title
+                                            });
+                                          }}
+                                          title="Eliminar página"
+                                          className={`p-0.5 rounded cursor-pointer ${
+                                            isPageSelected
+                                              ? 'text-blue-100 hover:text-rose-200'
+                                              : 'text-slate-400 hover:text-rose-600'
+                                          }`}
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+
+                              <button
+                                type="button"
+                                onClick={() => handleAddPage(unit.id, lesson.id)}
+                                className="w-full py-1 px-2 rounded-md border border-dashed border-slate-300 hover:border-blue-400 hover:bg-blue-50/50 text-[10px] font-bold text-slate-500 hover:text-blue-700 flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>Nueva página</span>
+                              </button>
+                            </div>
                           )}
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
-      </div>
+        </div>
+      </aside>
 
-      {/* Right Column: Active Lesson Workspace */}
-      <div className="flex-1 overflow-y-auto p-8">
-        {currentLesson ? (
-          <div className="max-w-4xl mx-auto space-y-6">
-            {/* Lesson Title & Summary Header Box */}
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
-              <div className="flex items-center justify-between gap-4 mb-4">
-                <div className="flex items-center gap-2 text-xs text-blue-600 font-semibold">
-                  <span className="px-2 py-0.5 rounded bg-blue-50 border border-blue-100">
-                    {currentUnit?.title}
-                  </span>
-                  <span>·</span>
-                  <span>Editando Contenido de Lección</span>
+      {/* ====================================================================
+          ZONE 2: CENTER PANEL - ACTIVE PAGE EDITOR
+         ==================================================================== */}
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 min-w-0 transition-all duration-300">
+        {currentUnit && currentLesson && currentPage ? (
+          <div
+            className={`mx-auto space-y-5 transition-all duration-300 ${
+              !showLeftPanel && !showRightPanel
+                ? 'max-w-full'
+                : !showLeftPanel || !showRightPanel
+                ? 'max-w-6xl'
+                : 'max-w-4xl'
+            }`}
+          >
+            {/* Page Navigation & Breadcrumb Card */}
+            <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setShowLeftPanel(v => !v)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 rounded-lg border border-slate-200 transition-colors cursor-pointer shrink-0"
+                    title={showLeftPanel ? 'Ocultar barra lateral de estructura' : 'Mostrar barra lateral de estructura'}
+                    aria-expanded={showLeftPanel}
+                  >
+                    {showLeftPanel ? (
+                      <PanelLeftClose className="w-4 h-4" />
+                    ) : (
+                      <PanelLeftOpen className="w-4 h-4" />
+                    )}
+                    <span className="hidden sm:inline">
+                      {showLeftPanel ? 'Ocultar árbol' : 'Estructura'}
+                    </span>
+                  </button>
+
+                  <div className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5 flex-wrap">
+                    <span className="text-blue-700">{currentUnit.title}</span>
+                    <span>/</span>
+                    <span className="text-slate-700">{currentLesson.title}</span>
+                    <span>/</span>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                      Página {currentPageIndex + 1} de {currentPages.length}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <label className="text-[11px] font-medium text-slate-600">Duración estimada:</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="120"
-                    value={currentLesson.estimatedMinutes}
-                    onChange={(e) => handleUpdateLessonMeta('estimatedMinutes', parseInt(e.target.value) || 5)}
-                    className="w-14 px-2 py-0.5 border border-slate-300 rounded text-center text-xs font-mono font-bold"
-                  />
-                  <span>min</span>
+                <div className="flex items-center gap-2">
+                  {/* Switch pages controls */}
+                  <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                    <button
+                      type="button"
+                      disabled={currentPageIndex <= 0}
+                      onClick={() => setSelectedPageId(currentPages[currentPageIndex - 1].id)}
+                      className="p-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-30 cursor-pointer"
+                      title="Página anterior"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <select
+                      value={currentPage.id}
+                      onChange={(e) => setSelectedPageId(e.target.value)}
+                      className="text-xs font-bold text-slate-800 bg-transparent px-2 py-1 focus:outline-none max-w-[180px] truncate cursor-pointer"
+                    >
+                      {currentPages.map((p, idx) => (
+                        <option key={p.id} value={p.id}>
+                          {idx + 1}. {p.title}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={currentPageIndex >= currentPages.length - 1}
+                      onClick={() => setSelectedPageId(currentPages[currentPageIndex + 1].id)}
+                      className="p-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-30 cursor-pointer"
+                      title="Página siguiente"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleAddPage(currentUnit.id, currentLesson.id)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Página</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowRightPanel(v => !v)}
+                    className="p-1.5 text-slate-600 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 rounded-lg border border-slate-200 cursor-pointer"
+                    title={showRightPanel ? 'Ocultar panel de propiedades' : 'Mostrar panel de propiedades'}
+                  >
+                    {showRightPanel ? (
+                      <PanelRightClose className="w-4 h-4" />
+                    ) : (
+                      <PanelRightOpen className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Título de la Lección</label>
+              {/* Active Page Title Input */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                <div className="flex-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">
+                    Nombre de la Página Activa
+                  </label>
                   <input
                     type="text"
-                    value={currentLesson.title}
-                    onChange={(e) => handleUpdateLessonMeta('title', e.target.value)}
-                    placeholder="Ej. 1.1 Introducción a los Métodos Ágiles"
-                    className="w-full text-base font-bold text-slate-900 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
+                    value={currentPage.title}
+                    onChange={(e) => handleUpdateCurrentPage({ title: e.target.value })}
+                    className="w-full text-lg font-extrabold text-slate-900 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none pb-0.5"
+                    placeholder="Título de la página..."
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Resumen Didáctico u Objetivo</label>
-                  <input
-                    type="text"
-                    value={currentLesson.summary}
-                    onChange={(e) => handleUpdateLessonMeta('summary', e.target.value)}
-                    placeholder="Breve párrafo introductorio para orientar al participante..."
-                    className="w-full text-xs text-slate-700 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
-                  />
-                </div>
+                {/* Condition Badge Indicator */}
+                {(() => {
+                  const ruleType = currentPage.navigationRule?.type || 'button';
+                  const badge = RULE_BADGE_MAP[ruleType] || RULE_BADGE_MAP.button;
+                  const BadgeIcon = badge.icon;
+                  return (
+                    <div
+                      onClick={() => setShowRightPanel(true)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer shrink-0 ${badge.pill}`}
+                      title="Haz clic para configurar la condición de avance"
+                    >
+                      <BadgeIcon className="w-3.5 h-3.5" />
+                      <span>Avance: {badge.label}</span>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -492,17 +1237,18 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
             <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Insertar Bloque Interactivo
+                  Agregar Bloque a "{currentPage.title}"
                 </span>
                 <span className="text-[11px] text-slate-400">
-                  Haz clic para agregar componentes pedagógicos a esta lección
+                  {currentPage.blocks.length} bloques en esta página
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2">
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('text')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-center group cursor-pointer"
                 >
                   <FileText className="w-4 h-4 text-blue-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Texto</span>
@@ -510,8 +1256,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('callout')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 transition-all text-center group cursor-pointer"
                 >
                   <AlertCircle className="w-4 h-4 text-amber-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Destacado</span>
@@ -519,8 +1266,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('math')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-teal-300 hover:bg-teal-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-teal-300 hover:bg-teal-50/50 transition-all text-center group cursor-pointer"
                 >
                   <Sigma className="w-4 h-4 text-teal-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Fórmula</span>
@@ -528,8 +1276,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('media')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-sky-300 hover:bg-sky-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-sky-300 hover:bg-sky-50/50 transition-all text-center group cursor-pointer"
                 >
                   <ImageIcon className="w-4 h-4 text-sky-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Multimedia</span>
@@ -537,8 +1286,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('resource')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-purple-300 hover:bg-purple-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-purple-300 hover:bg-purple-50/50 transition-all text-center group cursor-pointer"
                 >
                   <Download className="w-4 h-4 text-purple-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Recurso</span>
@@ -546,8 +1296,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('accordion')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all text-center group cursor-pointer"
                 >
                   <LayoutList className="w-4 h-4 text-indigo-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Acordeón</span>
@@ -555,8 +1306,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('tabs')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all text-center group cursor-pointer"
                 >
                   <Layers className="w-4 h-4 text-emerald-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Pestañas</span>
@@ -564,8 +1316,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('flashcards')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-violet-300 hover:bg-violet-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-violet-300 hover:bg-violet-50/50 transition-all text-center group cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4 text-violet-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Tarjetas</span>
@@ -573,8 +1326,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleAddBlock('checkpoint')}
-                  className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50/50 transition-all text-center group cursor-pointer"
                 >
                   <HelpCircle className="w-4 h-4 text-rose-600 mb-1 group-hover:scale-110 transition-transform" />
                   <span className="text-[11px] font-bold text-slate-800">Pregunta</span>
@@ -583,37 +1337,44 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
               </div>
             </div>
 
-            {/* List of Content Blocks inside the Lesson */}
+            {/* Active Page Content Blocks */}
             <div className="space-y-4">
-              {currentLesson.blocks.length === 0 ? (
-                <div className="bg-white rounded-xl border border-dashed border-slate-300 p-8 text-center">
+              {currentPage.blocks.length === 0 ? (
+                <div className="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center">
                   <BookOpen className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                  <h4 className="text-xs font-bold text-slate-700">Esta lección aún no tiene bloques</h4>
-                  <p className="text-[11px] text-slate-400 mt-1">Usa la barra superior para agregar tu primer bloque de texto o interactivo</p>
+                  <h4 className="text-xs font-bold text-slate-700">
+                    Esta página aún no tiene bloques de contenido
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Usa la barra superior para insertar texto enriquecido, imágenes, fórmulas, recursos o actividades.
+                  </p>
                 </div>
               ) : (
-                currentLesson.blocks.map((block, bIdx) => (
+                currentPage.blocks.map((block, bIdx) => (
                   <div
                     key={block.id}
                     className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs hover:border-slate-300 transition-colors"
                   >
                     {/* Block Header */}
                     <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-200 text-slate-700">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-200 text-slate-700 shrink-0">
                           Bloque {bIdx + 1}: {block.type}
                         </span>
                         <input
                           type="text"
                           value={block.title || ''}
-                          onChange={(e) => handleUpdateBlock(block.id, { ...block, title: e.target.value })}
+                          onChange={(e) =>
+                            handleUpdateBlock(block.id, { ...block, title: e.target.value })
+                          }
                           placeholder="Título opcional del bloque..."
-                          className="text-xs font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-64"
+                          className="text-xs font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none flex-1 min-w-0"
                         />
                       </div>
 
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 shrink-0">
                         <button
+                          type="button"
                           disabled={bIdx === 0}
                           onClick={() => handleMoveBlock(bIdx, 'up')}
                           className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 cursor-pointer"
@@ -622,7 +1383,8 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                           <ChevronUp className="w-4 h-4" />
                         </button>
                         <button
-                          disabled={bIdx === currentLesson.blocks.length - 1}
+                          type="button"
+                          disabled={bIdx === currentPage.blocks.length - 1}
                           onClick={() => handleMoveBlock(bIdx, 'down')}
                           className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 cursor-pointer"
                           title="Bajar bloque"
@@ -630,6 +1392,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                           <ChevronDown className="w-4 h-4" />
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleDeleteBlock(block.id)}
                           className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer ml-1"
                           title="Eliminar este bloque"
@@ -639,11 +1402,11 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Block Body according to type */}
+                    {/* Block Body */}
                     <div className="p-4">
                       {block.type === 'text' && (
                         <div>
-                          <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
                             <span>Editor de Texto Enriquecido</span>
                             <span className="text-[11px] font-normal text-slate-400">
                               Admite fórmulas KaTeX ($...$ o $$...$$), tablas editables, listas e imágenes
@@ -651,8 +1414,10 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                           </label>
                           <RichTextEditor
                             content={(block as TextBlock).content}
-                            onChange={(html) => handleUpdateBlock(block.id, { ...block, content: html })}
-                            placeholder="Redacta las explicaciones teóricas, conceptos o actividades. Usa la barra para formatear o insertar fórmulas..."
+                            onChange={(html) =>
+                              handleUpdateBlock(block.id, { ...block, content: html })
+                            }
+                            placeholder="Redacta las explicaciones teóricas, conceptos o actividades..."
                           />
                         </div>
                       )}
@@ -660,13 +1425,17 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                       {block.type === 'callout' && (
                         <div className="space-y-3">
                           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                            <label className="text-xs font-semibold text-slate-700">Tipo de Bloque Didáctico:</label>
+                            <label className="text-xs font-semibold text-slate-700">
+                              Tipo de Bloque Didáctico:
+                            </label>
                             <select
                               value={(block as CalloutBlock).variant}
-                              onChange={(e) => handleUpdateBlock(block.id, { 
-                                ...block, 
-                                variant: e.target.value as any 
-                              })}
+                              onChange={(e) =>
+                                handleUpdateBlock(block.id, {
+                                  ...block,
+                                  variant: e.target.value as any
+                                })
+                              }
                               className="text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-medium text-slate-800"
                             >
                               <option value="definition">📖 Definición Teórica (Púrpura)</option>
@@ -685,18 +1454,24 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                             <textarea
                               rows={3}
                               value={(block as CalloutBlock).content}
-                              onChange={(e) => handleUpdateBlock(block.id, { ...block, content: e.target.value })}
+                              onChange={(e) =>
+                                handleUpdateBlock(block.id, { ...block, content: e.target.value })
+                              }
                               placeholder="Escribe el texto de la definición, ejemplo o reflexión..."
                               className="w-full text-xs text-slate-800 p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white leading-relaxed"
                             />
-                            {/* Live preview of formulas in callout if any */}
-                            {((block as CalloutBlock).content.includes('$') || (block as CalloutBlock).content.includes('\\')) && (
+                            {((block as CalloutBlock).content.includes('$') ||
+                              (block as CalloutBlock).content.includes('\\')) && (
                               <div className="mt-2 p-2.5 bg-white border border-slate-200 rounded-lg text-xs">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Vista Previa con KaTeX:</span>
-                                <div 
-                                  dangerouslySetInnerHTML={{ 
-                                    __html: MathService.renderFormulasInHtml((block as CalloutBlock).content) 
-                                  }} 
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                                  Vista Previa con KaTeX:
+                                </span>
+                                <div
+                                  dangerouslySetInnerHTML={{
+                                    __html: MathService.renderFormulasInHtml(
+                                      (block as CalloutBlock).content
+                                    )
+                                  }}
                                 />
                               </div>
                             )}
@@ -707,8 +1482,11 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                       {block.type === 'accordion' && (
                         <div className="space-y-3">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-semibold text-slate-600">Secciones del Acordeón</span>
+                            <span className="text-xs font-semibold text-slate-600">
+                              Secciones del Acordeón
+                            </span>
                             <button
+                              type="button"
                               onClick={() => {
                                 const acc = block as AccordionBlock;
                                 const newItem = {
@@ -728,7 +1506,10 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                           </div>
 
                           {(block as AccordionBlock).items.map((item, itemIdx) => (
-                            <div key={item.id} className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                            <div
+                              key={item.id}
+                              className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2"
+                            >
                               <div className="flex items-center justify-between gap-2">
                                 <input
                                   type="text"
@@ -736,7 +1517,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                   onChange={(e) => {
                                     const acc = block as AccordionBlock;
                                     const updated = [...acc.items];
-                                    updated[itemIdx].title = e.target.value;
+                                    updated[itemIdx] = { ...updated[itemIdx], title: e.target.value };
                                     handleUpdateBlock(block.id, { ...acc, items: updated });
                                   }}
                                   placeholder="Título de la pestaña plegable"
@@ -744,12 +1525,13 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                 />
                                 {(block as AccordionBlock).items.length > 1 && (
                                   <button
+                                    type="button"
                                     onClick={() => {
                                       const acc = block as AccordionBlock;
                                       const updated = acc.items.filter(i => i.id !== item.id);
                                       handleUpdateBlock(block.id, { ...acc, items: updated });
                                     }}
-                                    className="text-slate-400 hover:text-rose-600 p-1"
+                                    className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
@@ -761,7 +1543,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                 onChange={(e) => {
                                   const acc = block as AccordionBlock;
                                   const updated = [...acc.items];
-                                  updated[itemIdx].content = e.target.value;
+                                  updated[itemIdx] = { ...updated[itemIdx], content: e.target.value };
                                   handleUpdateBlock(block.id, { ...acc, items: updated });
                                 }}
                                 placeholder="Contenido que se desplegará al hacer clic..."
@@ -775,8 +1557,11 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                       {block.type === 'tabs' && (
                         <div className="space-y-3">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-semibold text-slate-600">Pestañas Configuradas</span>
+                            <span className="text-xs font-semibold text-slate-600">
+                              Pestañas Configuradas
+                            </span>
                             <button
+                              type="button"
                               onClick={() => {
                                 const tb = block as TabsBlock;
                                 const newTab = {
@@ -796,7 +1581,10 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                           </div>
 
                           {(block as TabsBlock).tabs.map((tab, tIdx) => (
-                            <div key={tab.id} className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                            <div
+                              key={tab.id}
+                              className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2"
+                            >
                               <div className="flex items-center justify-between gap-2">
                                 <input
                                   type="text"
@@ -804,7 +1592,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                   onChange={(e) => {
                                     const tb = block as TabsBlock;
                                     const updated = [...tb.tabs];
-                                    updated[tIdx].label = e.target.value;
+                                    updated[tIdx] = { ...updated[tIdx], label: e.target.value };
                                     handleUpdateBlock(block.id, { ...tb, tabs: updated });
                                   }}
                                   placeholder="Etiqueta de la pestaña"
@@ -812,12 +1600,13 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                 />
                                 {(block as TabsBlock).tabs.length > 1 && (
                                   <button
+                                    type="button"
                                     onClick={() => {
                                       const tb = block as TabsBlock;
                                       const updated = tb.tabs.filter(t => t.id !== tab.id);
                                       handleUpdateBlock(block.id, { ...tb, tabs: updated });
                                     }}
-                                    className="text-slate-400 hover:text-rose-600 p-1"
+                                    className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
@@ -829,7 +1618,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                 onChange={(e) => {
                                   const tb = block as TabsBlock;
                                   const updated = [...tb.tabs];
-                                  updated[tIdx].content = e.target.value;
+                                  updated[tIdx] = { ...updated[tIdx], content: e.target.value };
                                   handleUpdateBlock(block.id, { ...tb, tabs: updated });
                                 }}
                                 placeholder="Contenido del panel de la pestaña..."
@@ -843,8 +1632,11 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                       {block.type === 'flashcards' && (
                         <div className="space-y-3">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-semibold text-slate-600">Tarjetas de Memoria Didácticas</span>
+                            <span className="text-xs font-semibold text-slate-600">
+                              Tarjetas de Memoria Didácticas
+                            </span>
                             <button
+                              type="button"
                               onClick={() => {
                                 const fc = block as FlashcardsBlock;
                                 const newCard = {
@@ -866,56 +1658,66 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {(block as FlashcardsBlock).cards.map((card, cIdx) => (
-                              <div key={card.id} className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2 relative">
+                              <div
+                                key={card.id}
+                                className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2 relative"
+                              >
                                 {(block as FlashcardsBlock).cards.length > 1 && (
                                   <button
+                                    type="button"
                                     onClick={() => {
                                       const fc = block as FlashcardsBlock;
                                       const updated = fc.cards.filter(c => c.id !== card.id);
                                       handleUpdateBlock(block.id, { ...fc, cards: updated });
                                     }}
-                                    className="absolute top-2 right-2 text-slate-400 hover:text-rose-600 p-1"
+                                    className="absolute top-2 right-2 text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 )}
                                 <div>
-                                  <label className="text-[10px] font-bold text-slate-500 uppercase">Frente (Pregunta/Término)</label>
+                                  <label className="text-[10px] font-bold text-slate-500 uppercase">
+                                    Frente (Pregunta/Término)
+                                  </label>
                                   <input
                                     type="text"
                                     value={card.front}
                                     onChange={(e) => {
                                       const fc = block as FlashcardsBlock;
                                       const updated = [...fc.cards];
-                                      updated[cIdx].front = e.target.value;
+                                      updated[cIdx] = { ...updated[cIdx], front: e.target.value };
                                       handleUpdateBlock(block.id, { ...fc, cards: updated });
                                     }}
                                     className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded px-2 py-1 mt-0.5"
                                   />
                                 </div>
                                 <div>
-                                  <label className="text-[10px] font-bold text-slate-500 uppercase">Dorso (Respuesta/Definición)</label>
+                                  <label className="text-[10px] font-bold text-slate-500 uppercase">
+                                    Dorso (Respuesta/Definición)
+                                  </label>
                                   <textarea
                                     rows={2}
                                     value={card.back}
                                     onChange={(e) => {
                                       const fc = block as FlashcardsBlock;
                                       const updated = [...fc.cards];
-                                      updated[cIdx].back = e.target.value;
+                                      updated[cIdx] = { ...updated[cIdx], back: e.target.value };
                                       handleUpdateBlock(block.id, { ...fc, cards: updated });
                                     }}
                                     className="w-full text-xs text-slate-800 bg-white border border-slate-200 rounded p-1.5 mt-0.5"
                                   />
                                 </div>
                                 <div>
-                                  <label className="text-[10px] font-bold text-slate-500 uppercase">Pista opcional</label>
+                                  <label className="text-[10px] font-bold text-slate-500 uppercase">
+                                    Pista opcional
+                                  </label>
                                   <input
                                     type="text"
                                     value={card.hint || ''}
                                     onChange={(e) => {
                                       const fc = block as FlashcardsBlock;
                                       const updated = [...fc.cards];
-                                      updated[cIdx].hint = e.target.value;
+                                      updated[cIdx] = { ...updated[cIdx], hint: e.target.value };
                                       handleUpdateBlock(block.id, { ...fc, cards: updated });
                                     }}
                                     placeholder="Ej. Revisa la lección anterior"
@@ -935,6 +1737,7 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                               Selecciona la pregunta vinculada desde el banco de reactivos:
                             </label>
                             <button
+                              type="button"
                               onClick={onOpenQuestionBank}
                               className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
                             >
@@ -949,10 +1752,12 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                           ) : (
                             <select
                               value={(block as CheckpointBlock).questionId}
-                              onChange={(e) => handleUpdateBlock(block.id, { ...block, questionId: e.target.value })}
+                              onChange={(e) =>
+                                handleUpdateBlock(block.id, { ...block, questionId: e.target.value })
+                              }
                               className="w-full text-xs text-slate-800 p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
                             >
-                              {project.questionBank.map((q, qIndex) => (
+                              {project.questionBank.map((q) => (
                                 <option key={q.id} value={q.id}>
                                   [{q.type}] {q.prompt} ({q.points} pts)
                                 </option>
@@ -965,13 +1770,17 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                       {block.type === 'media' && (
                         <div className="space-y-3">
                           <div className="flex items-center gap-3">
-                            <label className="text-xs font-semibold text-slate-700">Tipo de Recurso:</label>
+                            <label className="text-xs font-semibold text-slate-700">
+                              Tipo de Recurso:
+                            </label>
                             <select
                               value={(block as MediaBlock).mediaType}
-                              onChange={(e) => handleUpdateBlock(block.id, { 
-                                ...block, 
-                                mediaType: e.target.value as any 
-                              })}
+                              onChange={(e) =>
+                                handleUpdateBlock(block.id, {
+                                  ...block,
+                                  mediaType: e.target.value as any
+                                })
+                              }
                               className="text-xs border border-slate-300 rounded p-1 bg-white"
                             >
                               <option value="image">Imagen (Local o Enlace)</option>
@@ -1024,7 +1833,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                   <input
                                     type="text"
                                     value={(block as MediaBlock).url}
-                                    onChange={(e) => handleUpdateBlock(block.id, { ...block, url: e.target.value })}
+                                    onChange={(e) =>
+                                      handleUpdateBlock(block.id, { ...block, url: e.target.value })
+                                    }
                                     placeholder="media/nombre.jpg o https://..."
                                     className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white font-mono"
                                   />
@@ -1039,7 +1850,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                               <input
                                 type="text"
                                 value={(block as MediaBlock).url}
-                                onChange={(e) => handleUpdateBlock(block.id, { ...block, url: e.target.value })}
+                                onChange={(e) =>
+                                  handleUpdateBlock(block.id, { ...block, url: e.target.value })
+                                }
                                 placeholder="https://www.youtube.com/embed/..."
                                 className="w-full text-xs p-2 border border-slate-200 rounded bg-white font-mono"
                               />
@@ -1048,21 +1861,29 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                             <div>
-                              <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">Pie de foto / Leyenda</label>
+                              <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                                Pie de foto / Leyenda
+                              </label>
                               <input
                                 type="text"
                                 value={(block as MediaBlock).caption || ''}
-                                onChange={(e) => handleUpdateBlock(block.id, { ...block, caption: e.target.value })}
+                                onChange={(e) =>
+                                  handleUpdateBlock(block.id, { ...block, caption: e.target.value })
+                                }
                                 placeholder="Ej. Diagrama del ciclo ADDIE"
                                 className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
                               />
                             </div>
                             <div>
-                              <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">Texto alternativo (accesibilidad)</label>
+                              <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                                Texto alternativo (accesibilidad)
+                              </label>
                               <input
                                 type="text"
                                 value={(block as MediaBlock).altText || ''}
-                                onChange={(e) => handleUpdateBlock(block.id, { ...block, altText: e.target.value })}
+                                onChange={(e) =>
+                                  handleUpdateBlock(block.id, { ...block, altText: e.target.value })
+                                }
                                 placeholder="Descripción accesible"
                                 className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
                               />
@@ -1082,16 +1903,22 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                               <input
                                 type="checkbox"
                                 checked={(block as MathBlock).displayMode}
-                                onChange={(e) => handleUpdateBlock(block.id, { ...block, displayMode: e.target.checked })}
+                                onChange={(e) =>
+                                  handleUpdateBlock(block.id, {
+                                    ...block,
+                                    displayMode: e.target.checked
+                                  })
+                                }
                                 className="rounded text-teal-600 focus:ring-teal-500"
                               />
                               <span>Centrar ecuación en bloque independiente</span>
                             </label>
                           </div>
 
-                          {/* Quick symbols helper */}
                           <div className="flex flex-wrap gap-1 p-2 bg-slate-50 border border-slate-200 rounded-lg">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider self-center mr-1">Insertar:</span>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider self-center mr-1">
+                              Insertar:
+                            </span>
                             {[
                               { label: 'a/b', latex: '\\frac{a}{b}' },
                               { label: '√x', latex: '\\sqrt{x}' },
@@ -1105,14 +1932,17 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                               { label: '≠', latex: '\\neq' },
                               { label: '≤', latex: '\\le' },
                               { label: '≥', latex: '\\ge' },
-                              { label: '∞', latex: '\\infty' },
+                              { label: '∞', latex: '\\infty' }
                             ].map((sym, sIdx) => (
                               <button
                                 key={sIdx}
                                 type="button"
                                 onClick={() => {
                                   const cur = (block as MathBlock).latex || '';
-                                  handleUpdateBlock(block.id, { ...block, latex: cur ? `${cur} ${sym.latex}` : sym.latex });
+                                  handleUpdateBlock(block.id, {
+                                    ...block,
+                                    latex: cur ? `${cur} ${sym.latex}` : sym.latex
+                                  });
                                 }}
                                 className="px-2 py-0.5 text-xs font-mono bg-white hover:bg-teal-50 hover:text-teal-700 border border-slate-200 rounded text-slate-700 transition-colors cursor-pointer"
                               >
@@ -1124,8 +1954,10 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                           <textarea
                             rows={3}
                             value={(block as MathBlock).latex}
-                            onChange={(e) => handleUpdateBlock(block.id, { ...block, latex: e.target.value })}
-                            placeholder="Ej. f(x) = \\int_{-\\infty}^{\\infty} \\hat{f}(\\xi) e^{2\\pi i \\xi x} d\\xi"
+                            onChange={(e) =>
+                              handleUpdateBlock(block.id, { ...block, latex: e.target.value })
+                            }
+                            placeholder="Ej. f(x) = \int_{-\infty}^{\infty} \hat{f}(\xi) e^{2\pi i \xi x} d\xi"
                             className="w-full text-xs font-mono text-slate-800 p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:bg-white"
                           />
 
@@ -1136,22 +1968,23 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                             <input
                               type="text"
                               value={(block as MathBlock).caption || ''}
-                              onChange={(e) => handleUpdateBlock(block.id, { ...block, caption: e.target.value })}
+                              onChange={(e) =>
+                                handleUpdateBlock(block.id, { ...block, caption: e.target.value })
+                              }
                               placeholder="Ej. Transformada inversa de Fourier"
                               className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
                             />
                           </div>
 
-                          {/* Live Rendered KaTeX Output */}
                           <div className="p-4 bg-teal-50/40 border border-teal-200 rounded-xl">
                             <span className="text-[10px] font-bold text-teal-800 uppercase tracking-wider block mb-2">
                               Visualización con KaTeX:
                             </span>
-                            <div 
+                            <div
                               className="overflow-x-auto text-slate-900 py-1"
                               dangerouslySetInnerHTML={{
                                 __html: MathService.renderLatexToHtml(
-                                  (block as MathBlock).latex || '...', 
+                                  (block as MathBlock).latex || '...',
                                   (block as MathBlock).displayMode
                                 )
                               }}
@@ -1170,7 +2003,9 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                               <input
                                 type="text"
                                 value={(block as ResourceBlock).title}
-                                onChange={(e) => handleUpdateBlock(block.id, { ...block, title: e.target.value })}
+                                onChange={(e) =>
+                                  handleUpdateBlock(block.id, { ...block, title: e.target.value })
+                                }
                                 placeholder="Ej. Guía práctica en PDF, Plantilla Excel..."
                                 className="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white"
                               />
@@ -1210,13 +2045,14 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                             <textarea
                               rows={2}
                               value={(block as ResourceBlock).description || ''}
-                              onChange={(e) => handleUpdateBlock(block.id, { ...block, description: e.target.value })}
+                              onChange={(e) =>
+                                handleUpdateBlock(block.id, { ...block, description: e.target.value })
+                              }
                               placeholder="Explica para qué sirve este archivo y cuándo debe consultarlo el estudiante..."
                               className="w-full text-xs text-slate-800 p-2 border border-slate-200 rounded-lg bg-white"
                             />
                           </div>
 
-                          {/* File status card */}
                           <div className="p-3 bg-purple-50/50 border border-purple-200 rounded-lg flex items-center justify-between gap-3">
                             <div className="flex items-center gap-2.5 truncate">
                               <Paperclip className="w-5 h-5 text-purple-600 shrink-0" />
@@ -1225,8 +2061,10 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
                                   {(block as ResourceBlock).filename || 'Ningún archivo asignado'}
                                 </div>
                                 <div className="text-[10px] text-slate-500 font-mono">
-                                  {(block as ResourceBlock).relativePath 
-                                    ? `Ruta en paquete: ${(block as ResourceBlock).relativePath} (${Math.round(((block as ResourceBlock).fileSize || 0) / 1024)} KB)`
+                                  {(block as ResourceBlock).relativePath
+                                    ? `Ruta en paquete: ${(block as ResourceBlock).relativePath} (${Math.round(
+                                        ((block as ResourceBlock).fileSize || 0) / 1024
+                                      )} KB)`
                                     : 'Haz clic en "Seleccionar archivo" para adjuntar el documento al proyecto.'}
                                 </div>
                               </div>
@@ -1253,11 +2091,37 @@ export const ContentBuilderView: React.FC<ContentBuilderViewProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-center h-full text-slate-400">
-            Selecciona una unidad y lección a la izquierda para comenzar a diseñar
+          <div className="flex flex-col items-center justify-center h-full text-slate-400 text-xs gap-3">
+            {!showLeftPanel && (
+              <button
+                type="button"
+                onClick={() => setShowLeftPanel(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg cursor-pointer"
+              >
+                <PanelLeftOpen className="w-4 h-4" />
+                <span>Mostrar Estructura del Curso</span>
+              </button>
+            )}
+            <span>Selecciona una página del árbol izquierdo para comenzar a diseñar.</span>
           </div>
         )}
-      </div>
+      </main>
+
+      {/* ====================================================================
+          ZONE 3: RIGHT PANEL - PAGE NAVIGATION CONDITION & LESSON PROPS
+         ==================================================================== */}
+      {showRightPanel && currentLesson && currentPage && (
+        <PageNavigationPanel
+          project={project}
+          lesson={currentLesson}
+          page={currentPage}
+          onUpdatePageRule={handleUpdatePageRule}
+          onUpdatePageMeta={handleUpdateCurrentPage}
+          onUpdateLessonMeta={handleUpdateCurrentLessonMeta}
+          onInsertQuestionBlock={(qId) => handleAddBlock('checkpoint', qId)}
+          onOpenQuestionBank={onOpenQuestionBank}
+        />
+      )}
     </div>
   );
 };

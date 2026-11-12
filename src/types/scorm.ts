@@ -149,13 +149,75 @@ export type ContentBlock =
   | MathBlock
   | ResourceBlock;
 
+export type NavigationConditionType = 
+  | 'button'
+  | 'scrolling'
+  | 'question'
+  | 'interaction'
+  | 'resource';
+
+export type QuestionCriteria = 'answered' | 'correct';
+export type InteractionCriteria = 'any_one' | 'specific_count' | 'all_items';
+export type ResourceCriteria = 'open_only' | 'confirm_review' | 'confirm_activity';
+
+export interface PageNavigationRule {
+  type: NavigationConditionType;
+  // SCROLLING config
+  scrollThresholdPercent?: number; // default 95
+  // QUESTION config
+  questionId?: string;
+  questionCriteria?: QuestionCriteria;
+  maxAttempts?: number; // 0 = unlimited
+  allowRetry?: boolean;
+  showFeedback?: boolean;
+  // INTERACTION config
+  targetBlockId?: string; // block id or 'any'
+  interactionCriteria?: InteractionCriteria;
+  requiredCount?: number;
+  requiredItemIds?: string[];
+  // RESOURCE config
+  resourceBlockId?: string;
+  resourceCriteria?: ResourceCriteria;
+  // Extensibility for future combined conditions (AND / OR)
+  combinator?: 'AND' | 'OR';
+  secondaryRules?: PageNavigationRule[];
+  // Optional completion action
+  onCompleteAction?: 'unlock_next' | 'mark_page_complete';
+}
+
+export type LessonNavigationMode = 
+  | 'sequential' 
+  | 'free' 
+  | 'sequential_with_requirements';
+
+export interface LessonNavigationConfig {
+  mode: LessonNavigationMode;
+  allowBack: boolean;
+  allowSkip: boolean;
+  showPageIndex: boolean;
+  requireCompletionToAdvance: boolean;
+}
+
+export interface CoursePage {
+  id: string;
+  title: string;
+  order: number;
+  blocks: ContentBlock[];
+  navigationRule: PageNavigationRule;
+  allowBackOverride?: boolean;
+  completionNote?: string;
+}
+
 export interface CourseLesson {
   id: string;
   title: string;
   summary: string;
   estimatedMinutes: number;
-  blocks: ContentBlock[];
   order: number;
+  pages: CoursePage[];
+  navigationConfig?: LessonNavigationConfig;
+  // Legacy support for migration from older versions
+  blocks?: ContentBlock[];
   linkedQuizId?: string;
 }
 
@@ -165,6 +227,28 @@ export interface CourseUnit {
   description: string;
   order: number;
   lessons: CourseLesson[];
+}
+
+// Runtime student progress & navigation tracking state
+export interface PageRuntimeProgress {
+  visited: boolean;
+  completed: boolean;
+  scrollPercent: number;
+  scrolledToBottom: boolean;
+  interactedIds: string[];
+  openedResourceIds: string[];
+  confirmedResourceIds: string[];
+  questionAttempts: Record<string, number>;
+  questionAnswers: Record<string, any>;
+  questionCorrect: Record<string, boolean>;
+}
+
+export interface StudentProgressState {
+  currentLessonId: string;
+  currentPageId: string;
+  completedLessons: Record<string, boolean>;
+  completedAssessments: Record<string, { score: number; passed: boolean }>;
+  pages: Record<string, PageRuntimeProgress>;
 }
 
 export interface AssessmentConfig {

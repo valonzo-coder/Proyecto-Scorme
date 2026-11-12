@@ -30,16 +30,22 @@ export const ExportScormView: React.FC<ExportScormViewProps> = ({
 }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [exportComplete, setExportComplete] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadFileName, setDownloadFileName] = useState<string>('');
 
   const totalLessons = project.units.reduce((acc, u) => acc + u.lessons.length, 0);
+  const totalPages = project.units.reduce(
+    (acc, u) => acc + u.lessons.reduce((lAcc, l) => lAcc + (l.pages?.length || 0), 0),
+    0
+  );
   const totalQuestions = project.questionBank.length;
 
   const handleGenerateAndDownloadZip = async () => {
     try {
       setIsExporting(true);
       setExportComplete(false);
+      setExportError(null);
 
       // Generate the real ZIP blob using JSZip
       const zipBlob = await ScormGenerator.createScormZipBlob(project);
@@ -74,7 +80,7 @@ export const ExportScormView: React.FC<ExportScormViewProps> = ({
 
     } catch (error) {
       console.error('Error generating SCORM zip package', error);
-      alert('Ocurrió un error al generar el archivo comprimido.');
+      setExportError('Ocurrió un error al generar el archivo comprimido.');
       setIsExporting(false);
     }
   };
@@ -114,6 +120,13 @@ export const ExportScormView: React.FC<ExportScormViewProps> = ({
           )}
         </button>
       </div>
+
+      {/* Error Notification Alert */}
+      {exportError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-xs text-rose-800 font-semibold">
+          {exportError}
+        </div>
+      )}
 
       {/* Success Notification Alert */}
       {exportComplete && (
@@ -165,6 +178,10 @@ export const ExportScormView: React.FC<ExportScormViewProps> = ({
             <div className="pt-2 flex justify-between">
               <span className="text-slate-500">Lecciones interactivas:</span>
               <span className="font-bold text-slate-800">{totalLessons}</span>
+            </div>
+            <div className="pt-2 flex justify-between">
+              <span className="text-slate-500">Páginas de navegación:</span>
+              <span className="font-bold text-slate-800">{totalPages}</span>
             </div>
             <div className="pt-2 flex justify-between">
               <span className="text-slate-500">Banco de reactivos:</span>

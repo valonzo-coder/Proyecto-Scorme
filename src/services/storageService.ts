@@ -1,5 +1,6 @@
 import { CourseProject, QuestionItem, ProjectSyncStatus } from '../types/scorm';
 import { MediaService } from './mediaService';
+import { NavigationService, DEFAULT_LESSON_NAV_CONFIG } from './navigationService';
 
 const SESSION_KEY = 'edubuilder_active_project_session';
 const STATUS_KEY = 'edubuilder_active_project_status';
@@ -96,57 +97,100 @@ export const INITIAL_DEFAULT_PROJECT: CourseProject = {
           summary: 'Descubre las cinco etapas sistemáticas para construir experiencias de aprendizaje efectivas.',
           estimatedMinutes: 10,
           order: 1,
-          blocks: [
+          navigationConfig: {
+            mode: 'sequential',
+            allowBack: true,
+            allowSkip: false,
+            showPageIndex: true,
+            requireCompletionToAdvance: true
+          },
+          pages: [
             {
-              id: 'b-1',
-              type: 'text',
-              title: '¿Qué es el diseño instruccional y cómo se estructura?',
-              content: '<p class="lead">El diseño instruccional es el proceso sistemático de traducir principios de aprendizaje en recursos formativos altamente efectivos. Permite calcular el impacto formativo mediante métricas como $\\eta = \\frac{E_{final} - E_{inicial}}{E_{max}} \\times 100\\%$.</p><h3>Matriz de Fases Principales</h3><table class="border-collapse border border-slate-300 w-full my-3"><thead><tr class="bg-slate-100"><th class="border border-slate-300 p-2">Fase</th><th class="border border-slate-300 p-2">Entregable Clave</th><th class="border border-slate-300 p-2">Foco Pedagógico</th></tr></thead><tbody><tr><td class="border border-slate-300 p-2 font-bold">Análisis</td><td class="border border-slate-300 p-2">Perfil de audiencia</td><td class="border border-slate-300 p-2">Diagnóstico de necesidades</td></tr><tr><td class="border border-slate-300 p-2 font-bold">Diseño</td><td class="border border-slate-300 p-2">Matriz de competencias</td><td class="border border-slate-300 p-2">Taxonomía de Bloom</td></tr><tr><td class="border border-slate-300 p-2 font-bold">Desarrollo</td><td class="border border-slate-300 p-2">Paquete SCORM interactivo</td><td class="border border-slate-300 p-2">Microaprendizaje y práctica</td></tr></tbody></table><p>A diferencia de la simple digitalización de diapositivas estáticas, un recurso e-learning profesional fomenta la participación activa del estudiante.</p>'
-            },
-            {
-              id: 'b-2',
-              type: 'callout',
-              variant: 'definition',
-              title: 'Definición de Objeto de Aprendizaje',
-              content: 'Entidad digital educativa autocontenida y reutilizable, diseñada con un objetivo instruccional específico, actividades de aplicación y mecanismos de evaluación formativa inmediata.'
-            },
-            {
-              id: 'b-3',
-              type: 'accordion',
-              title: 'Las 5 Fases del Ciclo ADDIE',
-              items: [
+              id: 'page-1-1-1',
+              title: '1. Definición y Matriz de Fases',
+              order: 1,
+              navigationRule: { type: 'button' },
+              blocks: [
                 {
-                  id: 'acc-1',
-                  title: '1. Análisis (Analysis)',
-                  content: 'Identifica el perfil de tus estudiantes, sus conocimientos previos, brechas de desempeño y el contexto tecnológico donde cursarán la lección.'
+                  id: 'b-1',
+                  type: 'text',
+                  title: '¿Qué es el diseño instruccional y cómo se estructura?',
+                  content: '<p class="lead">El diseño instruccional es el proceso sistemático de traducir principios de aprendizaje en recursos formativos altamente efectivos. Permite calcular el impacto formativo mediante métricas como $\\eta = \\frac{E_{final} - E_{inicial}}{E_{max}} \\times 100\\%$.</p><h3>Matriz de Fases Principales</h3><table class="border-collapse border border-slate-300 w-full my-3"><thead><tr class="bg-slate-100"><th class="border border-slate-300 p-2">Fase</th><th class="border border-slate-300 p-2">Entregable Clave</th><th class="border border-slate-300 p-2">Foco Pedagógico</th></tr></thead><tbody><tr><td class="border border-slate-300 p-2 font-bold">Análisis</td><td class="border border-slate-300 p-2">Perfil de audiencia</td><td class="border border-slate-300 p-2">Diagnóstico de necesidades</td></tr><tr><td class="border border-slate-300 p-2 font-bold">Diseño</td><td class="border border-slate-300 p-2">Matriz de competencias</td><td class="border border-slate-300 p-2">Taxonomía de Bloom</td></tr><tr><td class="border border-slate-300 p-2 font-bold">Desarrollo</td><td class="border border-slate-300 p-2">Paquete SCORM interactivo</td><td class="border border-slate-300 p-2">Microaprendizaje y práctica</td></tr></tbody></table><p>A diferencia de la simple digitalización de diapositivas estáticas, un recurso e-learning profesional fomenta la participación activa del estudiante.</p>'
                 },
                 {
-                  id: 'acc-2',
-                  title: '2. Diseño (Design)',
-                  content: 'Define objetivos de aprendizaje medibles con la taxonomía de Bloom, la estructura de unidades y la estrategia de evaluación formativa y sumativa.'
-                },
-                {
-                  id: 'acc-3',
-                  title: '3. Desarrollo (Development)',
-                  content: 'Redacción de contenidos, creación de guiones multimedia, elaboración de actividades interactivas y ensamblado del paquete SCORM.'
-                },
-                {
-                  id: 'acc-4',
-                  title: '4. Implementación (Implementation)',
-                  content: 'Publicación en el LMS (Moodle, Blackboard, Canvas) y puesta a disposición de los alumnos verificando el registro de calificaciones.'
-                },
-                {
-                  id: 'acc-5',
-                  title: '5. Evaluación (Evaluation)',
-                  content: 'Monitoreo de métricas formativas, tasa de finalización y análisis de preguntas problemáticas para la mejora continua.'
+                  id: 'b-2',
+                  type: 'callout',
+                  variant: 'definition',
+                  title: 'Definición de Objeto de Aprendizaje',
+                  content: 'Entidad digital educativa autocontenida y reutilizable, diseñada con un objetivo instruccional específico, actividades de aplicación y mecanismos de evaluación formativa inmediata.'
                 }
               ]
             },
             {
-              id: 'b-4',
-              type: 'checkpoint',
-              title: 'Comprobación Rápida',
-              questionId: 'q1'
+              id: 'page-1-1-2',
+              title: '2. Las 5 Etapas del Ciclo ADDIE',
+              order: 2,
+              navigationRule: {
+                type: 'interaction',
+                targetBlockId: 'b-3',
+                interactionCriteria: 'specific_count',
+                requiredCount: 2
+              },
+              blocks: [
+                {
+                  id: 'b-3',
+                  type: 'accordion',
+                  title: 'Explora las 5 Fases del Ciclo ADDIE (abre al menos 2 para continuar)',
+                  items: [
+                    {
+                      id: 'acc-1',
+                      title: '1. Análisis (Analysis)',
+                      content: 'Identifica el perfil de tus estudiantes, sus conocimientos previos, brechas de desempeño y el contexto tecnológico donde cursarán la lección.'
+                    },
+                    {
+                      id: 'acc-2',
+                      title: '2. Diseño (Design)',
+                      content: 'Define objetivos de aprendizaje medibles con la taxonomía de Bloom, la estructura de unidades y la estrategia de evaluación formativa y sumativa.'
+                    },
+                    {
+                      id: 'acc-3',
+                      title: '3. Desarrollo (Development)',
+                      content: 'Redacción de contenidos, creación de guiones multimedia, elaboración de actividades interactivas y ensamblado del paquete SCORM.'
+                    },
+                    {
+                      id: 'acc-4',
+                      title: '4. Implementación (Implementation)',
+                      content: 'Publicación en el LMS (Moodle, Blackboard, Canvas) y puesta a disposición de los alumnos verificando el registro de calificaciones.'
+                    },
+                    {
+                      id: 'acc-5',
+                      title: '5. Evaluación (Evaluation)',
+                      content: 'Monitoreo de métricas formativas, tasa de finalización y análisis de preguntas problemáticas para la mejora continua.'
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              id: 'page-1-1-3',
+              title: '3. Comprobación de Aprendizaje',
+              order: 3,
+              navigationRule: {
+                type: 'question',
+                questionId: 'q1',
+                questionCriteria: 'correct',
+                maxAttempts: 0,
+                allowRetry: true,
+                showFeedback: true
+              },
+              blocks: [
+                {
+                  id: 'b-4',
+                  type: 'checkpoint',
+                  title: 'Comprobación Rápida',
+                  questionId: 'q1'
+                }
+              ]
             }
           ]
         },
@@ -156,44 +200,63 @@ export const INITIAL_DEFAULT_PROJECT: CourseProject = {
           summary: 'Aprende a fragmentar contenidos en píldoras formativas de alto impacto cognitivo.',
           estimatedMinutes: 12,
           order: 2,
-          blocks: [
+          navigationConfig: {
+            mode: 'free',
+            allowBack: true,
+            allowSkip: true,
+            showPageIndex: true,
+            requireCompletionToAdvance: false
+          },
+          pages: [
             {
-              id: 'b-5',
-              type: 'text',
-              title: 'Teoría de la Carga Cognitiva de Sweller',
-              content: '<p>Nuestra memoria de trabajo tiene una capacidad limitada. Al diseñar recursos e-learning, debemos minimizar la <strong>carga cognitiva extrínseca</strong> (distractores o interfaces complejas) para maximizar la <strong>carga germánica</strong> (construcción de esquemas mentales profundos).</p>'
-            },
-            {
-              id: 'b-6',
-              type: 'flashcards',
-              title: 'Tarjetas de Repaso: Principios de Mayer',
-              cards: [
+              id: 'page-1-2-1',
+              title: '1. Carga Cognitiva y Tarjetas de Mayer',
+              order: 1,
+              navigationRule: {
+                type: 'interaction',
+                targetBlockId: 'b-6',
+                interactionCriteria: 'all_items'
+              },
+              blocks: [
                 {
-                  id: 'fc-1',
-                  front: 'Principio de Señalización',
-                  back: 'Los estudiantes aprenden mejor cuando se añaden pistas visuales que dirigen la atención hacia los puntos centrales.',
-                  hint: 'Guía la mirada del estudiante'
+                  id: 'b-5',
+                  type: 'text',
+                  title: 'Teoría de la Carga Cognitiva de Sweller',
+                  content: '<p>Nuestra memoria de trabajo tiene una capacidad limitada. Al diseñar recursos e-learning, debemos minimizar la <strong>carga cognitiva extrínseca</strong> (distractores o interfaces complejas) para maximizar la <strong>carga germánica</strong> (construcción de esquemas mentales profundos).</p>'
                 },
                 {
-                  id: 'fc-2',
-                  front: 'Principio de Modalidad',
-                  back: 'Es preferible combinar imágenes con narración hablada antes que con texto escrito saturado en pantalla.',
-                  hint: 'Canal auditivo + visual'
+                  id: 'b-6',
+                  type: 'flashcards',
+                  title: 'Tarjetas de Repaso: Principios de Mayer',
+                  cards: [
+                    {
+                      id: 'fc-1',
+                      front: 'Principio de Señalización',
+                      back: 'Los estudiantes aprenden mejor cuando se añaden pistas visuales que dirigen la atención hacia los puntos centrales.',
+                      hint: 'Guía la mirada del estudiante'
+                    },
+                    {
+                      id: 'fc-2',
+                      front: 'Principio de Modalidad',
+                      back: 'Es preferible combinar imágenes con narración hablada antes que con texto escrito saturado en pantalla.',
+                      hint: 'Canal auditivo + visual'
+                    },
+                    {
+                      id: 'fc-3',
+                      front: 'Principio de Segmentación',
+                      back: 'El aprendizaje aumenta cuando el contenido se presenta en fragmentos controlados por el usuario en lugar de un flujo continuo.',
+                      hint: 'Control del ritmo por el alumno'
+                    }
+                  ]
                 },
                 {
-                  id: 'fc-3',
-                  front: 'Principio de Segmentación',
-                  back: 'El aprendizaje aumenta cuando el contenido se presenta en fragmentos controlados por el usuario en lugar de un flujo continuo.',
-                  hint: 'Control del ritmo por el alumno'
+                  id: 'b-7',
+                  type: 'callout',
+                  variant: 'info',
+                  title: 'Buenas prácticas para Moodle',
+                  content: 'Procura que cada lección SCORM tome entre 5 y 15 minutos en completarse. Esto permite que los estudiantes avancen en sus tiempos libres y favorece la retención a largo plazo.'
                 }
               ]
-            },
-            {
-              id: 'b-7',
-              type: 'callout',
-              variant: 'info',
-              title: 'Buenas prácticas para Moodle',
-              content: 'Procura que cada lección SCORM tome entre 5 y 15 minutos en completarse. Esto permite que los estudiantes avancen en sus tiempos libres y favorece la retención a largo plazo.'
             }
           ]
         }
@@ -211,62 +274,85 @@ export const INITIAL_DEFAULT_PROJECT: CourseProject = {
           summary: 'Comprende qué contiene el archivo .zip que importas a tu aula virtual Moodle.',
           estimatedMinutes: 15,
           order: 1,
-          blocks: [
+          navigationConfig: { ...DEFAULT_LESSON_NAV_CONFIG },
+          pages: [
             {
-              id: 'b-8',
-              type: 'text',
-              title: '¿Qué es SCORM?',
-              content: '<p><strong>SCORM</strong> (Sharable Content Object Reference Model) es una especificación técnica de ADL que define cómo crear objetos de aprendizaje interoperables que pueden reutilizarse en cualquier plataforma de aprendizaje virtual (LMS).</p>'
-            },
-            {
-              id: 'b-9',
-              type: 'tabs',
-              title: 'Componentes Clave de un Paquete SCORM',
-              tabs: [
+              id: 'page-2-1-1',
+              title: '1. Estructura Interna del Paquete',
+              order: 1,
+              navigationRule: { type: 'button' },
+              blocks: [
                 {
-                  id: 'tab-1',
-                  label: 'imsmanifest.xml',
-                  content: 'Es el cerebro del paquete. Contiene los metadatos del curso, la estructura jerárquica de unidades y lecciones, y el listado de todos los archivos físicos que componen el recurso.'
+                  id: 'b-8',
+                  type: 'text',
+                  title: '¿Qué es SCORM?',
+                  content: '<p><strong>SCORM</strong> (Sharable Content Object Reference Model) es una especificación técnica de ADL que define cómo crear objetos de aprendizaje interoperables que pueden reutilizarse en cualquier plataforma de aprendizaje virtual (LMS).</p>'
                 },
                 {
-                  id: 'tab-2',
-                  label: 'API Adapter',
-                  content: 'Es el puente JavaScript provisto por Moodle (window.API). El curso busca este objeto en los marcos superiores para enviar datos de progreso, puntuaciones y tiempo.'
+                  id: 'b-9',
+                  type: 'tabs',
+                  title: 'Componentes Clave de un Paquete SCORM',
+                  tabs: [
+                    {
+                      id: 'tab-1',
+                      label: 'imsmanifest.xml',
+                      content: 'Es el cerebro del paquete. Contiene los metadatos del curso, la estructura jerárquica de unidades y lecciones, y el listado de todos los archivos físicos que componen el recurso.'
+                    },
+                    {
+                      id: 'tab-2',
+                      label: 'API Adapter',
+                      content: 'Es el puente JavaScript provisto por Moodle (window.API). El curso busca este objeto en los marcos superiores para enviar datos de progreso, puntuaciones y tiempo.'
+                    },
+                    {
+                      id: 'tab-3',
+                      label: 'Modelo CMI',
+                      content: 'Conjunto estandarizado de variables de datos como cmi.core.lesson_status (completado/reprobado), cmi.core.score.raw (calificación numérica) y cmi.suspend_data (marcador para retomar).'
+                    }
+                  ]
                 },
                 {
-                  id: 'tab-3',
-                  label: 'Modelo CMI',
-                  content: 'Conjunto estandarizado de variables de datos como cmi.core.lesson_status (completado/reprobado), cmi.core.score.raw (calificación numérica) y cmi.suspend_data (marcador para retomar).'
+                  id: 'b-10',
+                  type: 'callout',
+                  variant: 'warning',
+                  title: 'Cuidado al Comprimir el ZIP',
+                  content: 'El archivo imsmanifest.xml DEBE encontrarse estrictamente en la raíz del archivo ZIP descargado. Si se comprime dentro de una carpeta padre, Moodle rechazará el paquete con error de manifiesto no encontrado.'
                 }
               ]
             },
             {
-              id: 'b-10',
-              type: 'callout',
-              variant: 'warning',
-              title: 'Cuidado al Comprimir el ZIP',
-              content: 'El archivo imsmanifest.xml DEBE encontrarse estrictamente en la raíz del archivo ZIP descargado. Si se comprime dentro de una carpeta padre, Moodle rechazará el paquete con error de manifiesto no encontrado.'
-            },
-            {
-              id: 'b-math-1',
-              type: 'math',
-              title: 'Modelo Matemático de Puntuación Ponderada SCORM',
-              latex: 'S_{final} = \\frac{\\sum_{j=1}^{m} w_j \\cdot s_j}{\\sum_{j=1}^{m} w_j} \\times 100\\%',
-              caption: 'Cálculo del puntaje maestro estandarizado cmi.core.score.raw transferido a la libreta de calificaciones de Moodle',
-              displayMode: true
-            },
-            {
-              id: 'b-example-1',
-              type: 'callout',
-              variant: 'example',
-              title: 'Ejemplo de Calificación Normalizada',
-              content: 'Si una actividad formativa pondera $w_1 = 0.4$ con puntaje $s_1 = 85$ y la evaluación sumativa $w_2 = 0.6$ con $s_2 = 90$, el LMS registrará un valor final de $88\\%$ cumpliendo el criterio de aprobación fijado en $80\\%$.'
-            },
-            {
-              id: 'b-11',
-              type: 'checkpoint',
-              title: 'Verificación de Conceptos',
-              questionId: 'q2'
+              id: 'page-2-1-2',
+              title: '2. Modelo de Puntuación y Verificación',
+              order: 2,
+              navigationRule: {
+                type: 'question',
+                questionId: 'q2',
+                questionCriteria: 'answered',
+                showFeedback: true,
+                allowRetry: true
+              },
+              blocks: [
+                {
+                  id: 'b-math-1',
+                  type: 'math',
+                  title: 'Modelo Matemático de Puntuación Ponderada SCORM',
+                  latex: 'S_{final} = \\frac{\\sum_{j=1}^{m} w_j \\cdot s_j}{\\sum_{j=1}^{m} w_j} \\times 100\\%',
+                  caption: 'Cálculo del puntaje maestro estandarizado cmi.core.score.raw transferido a la libreta de calificaciones de Moodle',
+                  displayMode: true
+                },
+                {
+                  id: 'b-example-1',
+                  type: 'callout',
+                  variant: 'example',
+                  title: 'Ejemplo de Calificación Normalizada',
+                  content: 'Si una actividad formativa pondera $w_1 = 0.4$ con puntaje $s_1 = 85$ y la evaluación sumativa $w_2 = 0.6$ con $s_2 = 90$, el LMS registrará un valor final de $88\\%$ cumpliendo el criterio de aprobación fijado en $80\\%$.'
+                },
+                {
+                  id: 'b-11',
+                  type: 'checkpoint',
+                  title: 'Verificación de Conceptos',
+                  questionId: 'q2'
+                }
+              ]
             }
           ]
         }
@@ -319,7 +405,7 @@ export class StorageService {
 
       if (data) {
         return {
-          project: JSON.parse(data),
+          project: NavigationService.migrateAndNormalizeProject(JSON.parse(data)),
           status: savedStatus,
           lastDownloaded
         };
@@ -329,7 +415,7 @@ export class StorageService {
     }
 
     return {
-      project: INITIAL_DEFAULT_PROJECT,
+      project: NavigationService.migrateAndNormalizeProject(INITIAL_DEFAULT_PROJECT),
       status: 'fresh',
       lastDownloaded: null
     };
@@ -410,19 +496,28 @@ export class StorageService {
               summary: 'Conoce los temas fundamentales que abordaremos a lo largo de este curso.',
               estimatedMinutes: 10,
               order: 1,
-              blocks: [
+              navigationConfig: { ...DEFAULT_LESSON_NAV_CONFIG },
+              pages: [
                 {
-                  id: `b-${Date.now()}-1`,
-                  type: 'text',
-                  title: '¡Te damos la bienvenida al curso!',
-                  content: '<p>Este recurso interactivo ha sido diseñado para guiarte paso a paso en el dominio de las competencias clave.</p>'
-                },
-                {
-                  id: `b-${Date.now()}-2`,
-                  type: 'callout',
-                  variant: 'info',
-                  title: 'Objetivo de Aprendizaje',
-                  content: 'Al finalizar esta lección, serás capaz de identificar los componentes esenciales de la temática propuesta.'
+                  id: `page-${Date.now()}-1`,
+                  title: 'Página 1: Introducción',
+                  order: 1,
+                  navigationRule: { type: 'button' },
+                  blocks: [
+                    {
+                      id: `b-${Date.now()}-1`,
+                      type: 'text',
+                      title: '¡Te damos la bienvenida al curso!',
+                      content: '<p>Este recurso interactivo ha sido diseñado para guiarte paso a paso en el dominio de las competencias clave.</p>'
+                    },
+                    {
+                      id: `b-${Date.now()}-2`,
+                      type: 'callout',
+                      variant: 'info',
+                      title: 'Objetivo de Aprendizaje',
+                      content: 'Al finalizar esta lección, serás capaz de identificar los componentes esenciales de la temática propuesta.'
+                    }
+                  ]
                 }
               ]
             }

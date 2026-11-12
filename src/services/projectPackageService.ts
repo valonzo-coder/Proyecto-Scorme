@@ -7,6 +7,7 @@ import {
   MediaAssetMeta 
 } from '../types/scorm';
 import { MediaService } from './mediaService';
+import { NavigationService } from './navigationService';
 
 export interface ImportResult {
   project: CourseProject;
@@ -192,8 +193,10 @@ paquete SCORM con imsmanifest.xml conforme a los estándares ADL.
       }
     }
 
+    const migratedProject = NavigationService.migrateAndNormalizeProject(project);
+
     return {
-      project,
+      project: migratedProject,
       mediaCount
     };
   }

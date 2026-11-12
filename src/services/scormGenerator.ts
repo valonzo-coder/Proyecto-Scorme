@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { CourseProject } from '../types/scorm';
 import { MediaService } from './mediaService';
-import { MathService } from './mathService';
+import { NavigationService } from './navigationService';
 
 export interface ScormExportOptions {
   includeDebugConsole?: boolean;
@@ -12,11 +12,11 @@ export class ScormGenerator {
   /**
    * Generates the imsmanifest.xml content according to SCORM 1.2 or SCORM 2004 specification.
    */
-  static generateManifest(project: CourseProject): string {
+  static generateManifest(rawProject: CourseProject): string {
+    const project = NavigationService.migrateAndNormalizeProject(rawProject);
     const config = project.scormConfig;
     const isScorm2004 = config.version.startsWith('2004');
     const safeTitle = this.escapeXml(project.title);
-    const safeDescription = this.escapeXml(project.description);
     const identifier = this.escapeXml(config.identifier || `course_${project.id}`);
     const orgIdentifier = `${identifier}_org`;
 
@@ -39,7 +39,7 @@ export class ScormGenerator {
           itemsXml += `          </imsss:sequencing>\n`;
         } else {
           itemsXml += `          <adlcp:masteryscore>${config.masteryScore}</adlcp:masteryscore>\n`;
-          itemsXml += `          <adlcp:datafromlms>${lesson.id}</adlcp:datafromlms>\n`;
+          itemsXml += `          <adlcp:datafromlms>${this.escapeXml(lesson.id)}</adlcp:datafromlms>\n`;
         }
         itemsXml += `        </item>\n`;
       });
@@ -65,7 +65,9 @@ export class ScormGenerator {
       });
     }
 
-    const mediaFilesXml = MediaService.getAllAssets().map(item => `      <file href="${this.escapeXml(item.meta.relativePath)}"/>\n`).join('');
+    const mediaFilesXml = MediaService.getAllAssets()
+      .map(item => `      <file href="${this.escapeXml(item.meta.relativePath)}"/>\n`)
+      .join('');
 
     if (isScorm2004) {
       return `<?xml version="1.0" encoding="UTF-8"?>
@@ -147,6 +149,7 @@ ${mediaFilesXml}    </resource>
     this.apiHandle = null;
     this.initialized = false;
     this.log = [];
+    this.localStorePrefix = 'edubuilder_sco_';
   }
 
   ScormBridge.prototype.findAPI = function(win) {
@@ -173,7 +176,7 @@ ${mediaFilesXml}    </resource>
       theAPI = this.findAPI(window.opener);
     }
     if (!theAPI) {
-      this.addLog('INFO', 'No LMS SCORM API adapter found. Running in standalone local preview mode.');
+      this.addLog('INFO', 'No LMS SCORM API adapter found. Running in standalone local mode.');
     } else {
       this.addLog('SUCCESS', 'Found SCORM ' + this.version + ' API adapter from LMS.');
     }
@@ -193,7 +196,10 @@ ${mediaFilesXml}    </resource>
     }
   };
 
-  ScormBridge.prototype.init = function() {
+  ScormBridge.prototype.init = function(courseId) {
+    if (courseId) {
+      this.localStorePrefix = 'edubuilder_sco_' + courseId + '_';
+    }
     var api = this.getAPI();
     if (!api) {
       this.initialized = true;
@@ -211,7 +217,13 @@ ${mediaFilesXml}    </resource>
   };
 
   ScormBridge.prototype.getValue = function(cmiElement) {
-    if (!this.apiHandle) return '';
+    if (!this.apiHandle) {
+      try {
+        return window.localStorage.getItem(this.localStorePrefix + cmiElement) || '';
+      } catch (e) {
+        return '';
+      }
+    }
     var val = '';
     if (this.version === '2004') {
       val = this.apiHandle.GetValue(cmiElement);
@@ -223,7 +235,12 @@ ${mediaFilesXml}    </resource>
   };
 
   ScormBridge.prototype.setValue = function(cmiElement, value) {
-    if (!this.apiHandle) return true;
+    if (!this.apiHandle) {
+      try {
+        window.localStorage.setItem(this.localStorePrefix + cmiElement, String(value));
+      } catch (e) {}
+      return true;
+    }
     var result = 'false';
     if (this.version === '2004') {
       result = this.apiHandle.SetValue(cmiElement, String(value));
@@ -265,9 +282,10 @@ ${mediaFilesXml}    </resource>
   }
 
   /**
-   * Generates standalone course_data.js containing the project object.
+   * Generates standalone course_data.js containing the normalized project object.
    */
-  static generateCourseDataJs(project: CourseProject): string {
+  static generateCourseDataJs(rawProject: CourseProject): string {
+    const project = NavigationService.migrateAndNormalizeProject(rawProject);
     const serialized = JSON.stringify(project, null, 2);
     return `// Auto-generated course definition by EduBuilder SCORM
 window.COURSE_DATA = ${serialized};
@@ -275,26 +293,31 @@ window.COURSE_DATA = ${serialized};
   }
 
   /**
-   * Generates the self-contained CSS styles for the student player.
+   * Generates the self-contained CSS styles for the multi-page conditional student player.
    */
   static generatePlayerCss(): string {
     return `/* EduBuilder SCORM Player Styles - Moodle Compatible */
 :root {
-  --primary: #1d4ed8;
-  --primary-hover: #1e40af;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
   --primary-light: #eff6ff;
   --text-main: #0f172a;
   --text-muted: #64748b;
   --border: #e2e8f0;
   --bg-page: #f8fafc;
   --bg-card: #ffffff;
-  --radius: 8px;
+  --radius: 10px;
 }
 
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -307,49 +330,71 @@ body {
 
 .scorm-layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* Header */
 .scorm-header {
   background: #ffffff;
   border-bottom: 1px solid var(--border);
-  padding: 12px 24px;
+  padding: 12px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  position: sticky;
-  top: 0;
+  gap: 16px;
+  flex-shrink: 0;
   z-index: 50;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sidebar-toggle-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.sidebar-toggle-btn:hover {
+  background: #e2e8f0;
 }
 
 .header-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   color: #0f172a;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-meta {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
 .progress-container {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-width: 220px;
+  gap: 10px;
+  min-width: 190px;
+  flex-shrink: 0;
 }
 
 .progress-bar-bg {
@@ -368,7 +413,7 @@ body {
 
 .progress-label {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   color: #334155;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -378,63 +423,242 @@ body {
 .scorm-body {
   display: flex;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
   position: relative;
 }
 
-/* Sidebar navigation */
+/* Collapsible Sidebar navigation */
+.sidebar-backdrop {
+  display: none;
+}
+
 .scorm-sidebar {
-  width: 320px;
-  background: #ffffff;
+  width: 300px;
+  background: #f8fafc;
   border-right: 1px solid var(--border);
-  overflow-y: auto;
-  max-height: calc(100vh - 65px);
-  padding: 16px 0;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.28s ease, opacity 0.22s ease, transform 0.28s ease;
+}
+
+.scorm-sidebar.collapsed {
+  width: 0;
+  opacity: 0;
+  border-right: none;
+  pointer-events: none;
+}
+
+.sidebar-inner {
+  width: 300px;
+  max-width: 85vw;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-top-bar {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.unit-header {
-  padding: 10px 16px;
+.sidebar-top-title {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #64748b;
+  color: #475569;
+}
+
+.sidebar-close-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
   background: #f8fafc;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sidebar-close-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 10px;
+}
+
+.unit-group {
+  margin-bottom: 10px;
+}
+
+.unit-toggle-btn {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #475569;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.unit-toggle-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.unit-lessons-list {
+  margin-top: 4px;
+  padding-left: 4px;
+}
+
+.lesson-nav-group {
+  margin-bottom: 6px;
+}
+
+.lesson-nav-row {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.lesson-nav-row:hover {
+  background: #e2e8f0;
+}
+
+.lesson-nav-row.active {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.lesson-pages-toggle {
+  background: none;
+  border: none;
+  padding: 8px 8px;
+  font-size: 11px;
+  color: #64748b;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lesson-nav-row.active .lesson-pages-toggle {
+  color: #dbeafe;
+}
+
+.sidebar-pages-list {
+  margin-top: 4px;
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1px solid #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-page-btn {
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  transition: all 0.12s ease;
+}
+
+.sidebar-page-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.sidebar-page-btn.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  font-weight: 700;
+}
+
+.sidebar-page-btn.completed {
+  color: #065f46;
+}
+
+.sidebar-page-btn.locked {
+  color: #94a3b8;
+  opacity: 0.78;
+}
+
+.unit-header {
+  padding: 8px 10px 4px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  margin-top: 8px;
 }
 
 .unit-header:first-child {
-  border-top: none;
+  margin-top: 0;
 }
 
 .lesson-nav-btn {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   text-align: left;
-  padding: 12px 16px;
-  background: none;
+  padding: 9px 10px;
+  background: transparent;
   border: none;
-  font-size: 14px;
+  border-radius: 8px;
+  font-size: 13px;
   color: #334155;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  transition: background 0.15s ease;
-  border-left: 3px solid transparent;
+  gap: 8px;
+  transition: all 0.15s ease;
 }
 
-.lesson-nav-btn:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
+.lesson-nav-row.active .lesson-nav-btn,
 .lesson-nav-btn.active {
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #2563eb;
+  color: #ffffff;
   font-weight: 600;
-  border-left-color: #2563eb;
 }
 
 .lesson-status-icon {
@@ -442,11 +666,17 @@ body {
   height: 18px;
   border-radius: 50%;
   border: 1.5px solid #cbd5e1;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   font-size: 10px;
+  font-weight: 700;
+}
+
+.lesson-nav-btn.active .lesson-status-icon {
+  border-color: #ffffff;
+  color: #ffffff;
 }
 
 .lesson-status-icon.completed {
@@ -455,49 +685,160 @@ body {
   color: #ffffff;
 }
 
-/* Content Viewport */
-.scorm-content {
-  flex: 1;
-  padding: 32px 48px;
-  max-width: 960px;
-  margin: 0 auto;
+.lesson-nav-btn.active .lesson-status-icon.completed {
+  border-color: #ffffff;
+  background: #ffffff;
+  color: #2563eb;
 }
 
-.lesson-header-area {
-  margin-bottom: 28px;
-  padding-bottom: 16px;
+/* Right Main Viewport: Fixed Top Header + Isolated Scrollable Page Content + Fixed Footer */
+.scorm-viewport {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.page-top-header {
+  padding: 16px 32px;
   border-bottom: 1px solid var(--border);
+  background: #f8fafc;
+  flex-shrink: 0;
+}
+
+.page-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .lesson-breadcrumbs {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #2563eb;
 }
 
-.lesson-main-title {
-  font-size: 26px;
+.page-main-title {
+  font-size: 20px;
   font-weight: 800;
   color: #0f172a;
   line-height: 1.3;
+  margin-top: 2px;
 }
 
-.lesson-summary {
-  font-size: 15px;
-  color: #475569;
-  margin-top: 8px;
+.page-progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-progress-text {
+  text-align: right;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.page-progress-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.mini-progress-bg {
+  width: 84px;
+  height: 7px;
+  background: #e2e8f0;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.mini-progress-fill {
+  height: 100%;
+  background: #10b981;
+  transition: width 0.3s ease;
+}
+
+/* Page Index Pills */
+.page-index-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  margin-top: 12px;
+  padding-bottom: 2px;
+}
+
+.page-pill {
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.page-pill:hover {
+  background: #f1f5f9;
+}
+
+.page-pill.active {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
+}
+
+.page-pill.completed {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+.page-pill.locked {
+  background: #f1f5f9;
+  color: #94a3b8;
+  opacity: 0.78;
+}
+
+/* Isolated Scrollable Page Content Area */
+.page-scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 40px;
+}
+
+.page-inner-container {
+  max-width: 860px;
+  margin: 0 auto;
+  transition: max-width 0.28s ease;
+}
+
+.scorm-layout.sidebar-hidden .page-inner-container {
+  max-width: 1120px;
 }
 
 /* Block Styles */
 .content-block {
-  margin-bottom: 28px;
+  margin-bottom: 24px;
 }
 
 .block-title {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
   color: #1e293b;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .block-text {
@@ -510,8 +851,24 @@ body {
   margin-bottom: 12px;
 }
 
+.block-text ul, .block-text ol {
+  padding-left: 22px;
+  margin-bottom: 12px;
+}
+
 .block-text strong {
   color: #0f172a;
+}
+
+.block-text img, .block-text video {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 10px 0;
+}
+
+.block-text audio {
+  width: 100%;
+  margin: 10px 0;
 }
 
 /* Callouts */
@@ -522,55 +879,18 @@ body {
   background: #f8fafc;
 }
 
-.callout-box.tip {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
-  color: #166534;
-}
-
-.callout-box.warning {
-  background: #fffbeb;
-  border-color: #fde68a;
-  color: #92400e;
-}
-
-.callout-box.info {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-  color: #1e40af;
-}
-
-.callout-box.definition {
-  background: #faf5ff;
-  border-color: #e9d5ff;
-  color: #581c87;
-}
-
-.callout-box.example {
-  background: #ecfeff;
-  border-color: #a5f3fc;
-  color: #164e63;
-}
-
-.callout-box.activity {
-  background: #fff7ed;
-  border-color: #fed7aa;
-  color: #9a3412;
-}
-
-.callout-box.reflection {
-  background: #fdf2f8;
-  border-color: #fbcfe8;
-  color: #831843;
-}
+.callout-box.tip { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.callout-box.warning { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.callout-box.info { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+.callout-box.definition { background: #faf5ff; border-color: #e9d5ff; color: #581c87; }
+.callout-box.example { background: #ecfeff; border-color: #a5f3fc; color: #164e63; }
+.callout-box.activity { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+.callout-box.reflection { background: #fdf2f8; border-color: #fbcfe8; color: #831843; }
 
 .callout-title {
   font-weight: 700;
   font-size: 14px;
   margin-bottom: 6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .callout-content {
@@ -580,7 +900,7 @@ body {
 
 /* Math equations */
 .block-math {
-  margin: 18px 0;
+  margin: 16px 0;
   padding: 18px 20px;
   background: #f0fdfa;
   border: 1px solid #ccfbf1;
@@ -602,17 +922,21 @@ body {
   font-style: italic;
 }
 
-/* Downloadable Resources */
+/* Downloadable Resources & Confirmation */
 .block-resource {
-  margin: 18px 0;
+  margin: 16px 0;
   padding: 16px 20px;
   background: #faf5ff;
-  border: 1px solid #f3e8ff;
+  border: 1px solid #e9d5ff;
   border-radius: var(--radius);
+}
+
+.resource-top-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
 }
 
 .resource-title {
@@ -622,10 +946,9 @@ body {
 }
 
 .resource-desc {
-  font-size: 12px;
-  color: #64748b;
+  font-size: 13px;
+  color: #475569;
   margin-top: 4px;
-  line-height: 1.5;
 }
 
 .resource-download-btn {
@@ -634,11 +957,13 @@ body {
   gap: 8px;
   background: #7e22ce;
   color: #ffffff;
-  padding: 8px 16px;
-  border-radius: 6px;
+  padding: 9px 16px;
+  border-radius: 7px;
+  border: none;
   text-decoration: none;
   font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
   white-space: nowrap;
 }
 
@@ -646,11 +971,42 @@ body {
   background: #6b21a8;
 }
 
-/* Rich Content Elements in block-text */
+.resource-confirm-box {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e9d5ff;
+}
+
+.resource-confirm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 7px;
+  border: 1px solid #d8b4fe;
+  background: #ffffff;
+  color: #581c87;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.resource-confirm-btn.confirmed {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.resource-confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Rich Content Elements */
 .block-text table {
   width: 100%;
   border-collapse: collapse;
-  margin: 16px 0;
+  margin: 14px 0;
   font-size: 13px;
 }
 
@@ -668,7 +1024,7 @@ body {
 .block-text blockquote {
   border-left: 4px solid #3b82f6;
   padding-left: 14px;
-  margin: 14px 0;
+  margin: 12px 0;
   color: #475569;
   font-style: italic;
 }
@@ -688,11 +1044,15 @@ body {
   overflow: hidden;
 }
 
+.accordion-item.interacted {
+  border-color: #86efac;
+}
+
 .accordion-trigger {
   width: 100%;
-  padding: 14px 18px;
+  padding: 13px 16px;
   text-align: left;
-  background: #ffffff;
+  background: #f8fafc;
   border: none;
   font-size: 14px;
   font-weight: 600;
@@ -704,21 +1064,19 @@ body {
 }
 
 .accordion-trigger:hover {
-  background: #f8fafc;
+  background: #f1f5f9;
 }
 
 .accordion-content {
-  padding: 0 18px 14px 18px;
+  padding: 14px 16px;
   font-size: 14px;
   color: #475569;
-  line-height: 1.6;
   border-top: 1px solid #f1f5f9;
   display: none;
 }
 
 .accordion-item.open .accordion-content {
   display: block;
-  padding-top: 14px;
 }
 
 /* Tabs */
@@ -737,45 +1095,39 @@ body {
 }
 
 .tab-nav-btn {
-  padding: 10px 18px;
+  padding: 10px 16px;
   background: none;
   border: none;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: #64748b;
   cursor: pointer;
   white-space: nowrap;
   border-bottom: 2px solid transparent;
 }
 
-.tab-nav-btn:hover {
-  color: #1e293b;
-}
-
 .tab-nav-btn.active {
   color: #2563eb;
-  font-weight: 600;
   border-bottom-color: #2563eb;
   background: #ffffff;
 }
 
 .tab-panel {
-  padding: 18px;
+  padding: 16px;
   font-size: 14px;
   color: #334155;
-  line-height: 1.6;
 }
 
 /* Flashcards */
 .flashcards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
 }
 
 .flashcard {
   perspective: 1000px;
-  min-height: 180px;
+  min-height: 165px;
   cursor: pointer;
 }
 
@@ -783,13 +1135,16 @@ body {
   position: relative;
   width: 100%;
   height: 100%;
-  min-height: 180px;
+  min-height: 165px;
   text-align: center;
-  transition: transform 0.5s;
+  transition: transform 0.45s;
   transform-style: preserve-3d;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.flashcard.interacted .flashcard-inner {
+  border-color: #86efac;
 }
 
 .flashcard.flipped .flashcard-inner {
@@ -801,7 +1156,7 @@ body {
   width: 100%;
   height: 100%;
   backface-visibility: hidden;
-  padding: 20px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -815,30 +1170,37 @@ body {
 }
 
 .flashcard-back {
-  background: #eff6ff;
-  color: #1e3a8a;
+  background: #2563eb;
+  color: #ffffff;
   transform: rotateY(180deg);
 }
 
-.card-hint {
-  font-size: 12px;
-  color: #64748b;
-  margin-top: 8px;
+.card-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background: #dcfce7;
+  color: #166534;
 }
 
 /* Quiz & Checkpoint Interactive Area */
 .quiz-wrapper {
   background: #ffffff;
-  border: 1px solid var(--border);
+  border: 1px solid #bfdbfe;
   border-radius: var(--radius);
-  padding: 24px;
-  margin-top: 24px;
+  padding: 20px;
+  margin-top: 16px;
+  background: #eff6ff40;
 }
 
 .question-item-card {
-  margin-bottom: 24px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .question-item-card:last-child {
@@ -848,25 +1210,28 @@ body {
 
 .question-prompt {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   color: #0f172a;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .option-choice {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 10px;
   padding: 10px 14px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 7px;
   margin-bottom: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  background: #ffffff;
   font-size: 14px;
+  width: 100%;
+  text-align: left;
 }
 
-.option-choice:hover {
+.option-choice:hover:not(:disabled) {
   background: #f8fafc;
   border-color: #cbd5e1;
 }
@@ -875,7 +1240,83 @@ body {
   background: #eff6ff;
   border-color: #3b82f6;
   color: #1d4ed8;
-  font-weight: 500;
+  font-weight: 600;
+}
+
+.option-choice.correct {
+  background: #dcfce7;
+  border-color: #4ade80;
+  color: #14532d;
+  font-weight: 700;
+}
+
+.option-choice.incorrect {
+  background: #fee2e2;
+  border-color: #f87171;
+  color: #7f1d1d;
+  font-weight: 700;
+}
+
+/* Fixed Footer & Condition Banners */
+.page-footer-area {
+  border-top: 1px solid var(--border);
+  background: #f8fafc;
+  padding: 12px 32px;
+  flex-shrink: 0;
+}
+
+.nav-notice-banner {
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.condition-banner {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.condition-banner.locked {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.condition-banner.unlocked {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+.condition-progress-badge {
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.85);
+  border: 1px solid rgba(0,0,0,0.08);
+}
+
+.lesson-footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .btn-primary {
@@ -885,16 +1326,42 @@ body {
   background: #2563eb;
   color: #ffffff;
   border: none;
-  padding: 10px 20px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 600;
+  padding: 9px 18px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
   transition: background 0.15s ease;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: #1d4ed8;
+}
+
+.btn-primary:disabled {
+  background: #cbd5e1;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.btn-success {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #16a34a;
+  color: #ffffff;
+  border: none;
+  padding: 9px 18px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-success:disabled {
+  background: #cbd5e1;
+  color: #64748b;
+  cursor: not-allowed;
 }
 
 .btn-secondary {
@@ -904,32 +1371,42 @@ body {
   background: #ffffff;
   color: #334155;
   border: 1px solid var(--border);
-  padding: 10px 18px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  padding: 9px 16px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 
-.btn-secondary:hover {
-  background: #f8fafc;
+.btn-secondary:hover:not(:disabled) {
+  background: #f1f5f9;
 }
 
-/* Nav footer buttons */
-.lesson-footer-nav {
-  margin-top: 40px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border);
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.short-scroll-confirm-box {
+  margin-top: 20px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  border: 1px solid #99f6e4;
+  background: #f0fdfa;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: #134e4a;
 }
 
 /* Feedback alert */
 .feedback-box {
-  margin-top: 14px;
-  padding: 12px 16px;
-  border-radius: 6px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 7px;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -946,27 +1423,54 @@ body {
   border: 1px solid #fca5a5;
 }
 
-/* Mobile responsive */
+/* Mobile & Tablet Overlay Responsive */
 @media (max-width: 860px) {
-  .scorm-body {
-    flex-direction: column;
+  .sidebar-backdrop.visible {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 35;
+    background: rgba(15, 23, 42, 0.48);
   }
   .scorm-sidebar {
-    width: 100%;
-    max-height: 240px;
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 40;
+    width: 300px;
+    max-width: 85vw;
+    box-shadow: 6px 0 24px rgba(0,0,0,0.18);
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
   }
-  .scorm-content {
-    padding: 20px;
+  .scorm-sidebar.collapsed {
+    width: 300px;
+    max-width: 85vw;
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .page-top-header,
+  .page-footer-area {
+    padding: 12px 16px;
+  }
+  .page-scroll-area {
+    padding: 20px 16px;
   }
 }
 `;
   }
 
   /**
-   * Generates the self-contained index.html standalone student player.
+   * Generates the self-contained index.html standalone student player with
+   * single-page rendering, collapsible menu, 5 navigation conditions, and compact SCORM persistence.
    */
-  static generateIndexHtml(project: CourseProject): string {
+  static generateIndexHtml(rawProject: CourseProject): string {
+    const project = NavigationService.migrateAndNormalizeProject(rawProject);
     const safeTitle = this.escapeXml(project.title);
+
     return `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -981,12 +1485,12 @@ body {
 </head>
 <body>
   <div class="scorm-layout" id="app">
-    <!-- Top Bar -->
     <header class="scorm-header">
       <div class="header-left">
-        <div>
+        <button type="button" class="sidebar-toggle-btn" id="toggleSidebarBtn" title="Mostrar u ocultar menú del curso" aria-label="Mostrar u ocultar menú del curso" aria-expanded="true"></button>
+        <div style="min-width:0;">
           <h1 class="header-title" id="courseHeaderTitle">${safeTitle}</h1>
-          <div class="header-meta" id="courseHeaderSub">EduBuilder SCORM · Compatible con Moodle LMS</div>
+          <div class="header-meta" id="courseHeaderSub">EduBuilder SCORM ${this.escapeXml(project.scormConfig.version)} · Compatible con Moodle LMS</div>
         </div>
       </div>
       <div class="progress-container">
@@ -998,15 +1502,9 @@ body {
     </header>
 
     <div class="scorm-body">
-      <!-- Navigation Drawer -->
-      <aside class="scorm-sidebar" id="sidebarContainer">
-        <!-- Injected via JavaScript -->
-      </aside>
-
-      <!-- Main Lesson Viewport -->
-      <main class="scorm-content" id="contentContainer">
-        <!-- Injected via JavaScript -->
-      </main>
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+      <aside class="scorm-sidebar" id="sidebarContainer"></aside>
+      <main class="scorm-viewport" id="viewportContainer"></main>
     </div>
   </div>
 
@@ -1017,300 +1515,990 @@ body {
   <script>
     (function() {
       'use strict';
-      
+
       var course = window.COURSE_DATA;
-      var currentLessonId = null;
-      var completedLessons = {};
-      var quizAnswers = {};
-      var quizScore = 0;
+      var isScorm2004 = (course.scormConfig && String(course.scormConfig.version).indexOf('2004') === 0);
 
       // Initialize SCORM Bridge
-      window.ScormBridge.init();
-
-      // Check saved location or bookmark
-      var bookmark = window.ScormBridge.getValue('cmi.core.lesson_location') || window.ScormBridge.getValue('cmi.location');
-      var suspendData = window.ScormBridge.getValue('cmi.suspend_data');
-      if (suspendData) {
-        try {
-          var parsed = JSON.parse(suspendData);
-          if (parsed.completed) completedLessons = parsed.completed;
-          if (parsed.quizAnswers) quizAnswers = parsed.quizAnswers;
-        } catch(e) {}
+      window.ScormBridge.init(course.id);
+      if (window.ScormBridge.version) {
+        isScorm2004 = (window.ScormBridge.version === '2004');
       }
 
-      // Collect all lessons in sequential order
+      // Flatten lessons & build compact page index map (identical to NavigationService)
       var allLessons = [];
-      course.units.forEach(function(u) {
-        u.lessons.forEach(function(l) {
-          allLessons.push({
-            unitTitle: u.title,
-            lesson: l
+      var pageIndexMap = {};
+      var reversePageMap = {};
+      var pCounter = 0;
+
+      (course.units || []).forEach(function(u) {
+        (u.lessons || []).forEach(function(l) {
+          if (!l.pages || l.pages.length === 0) {
+            l.pages = [{ id: 'page-' + l.id + '-1', title: 'Página 1', order: 1, blocks: l.blocks || [], navigationRule: { type: 'button' } }];
+          }
+          if (!l.navigationConfig) {
+            l.navigationConfig = { mode: 'sequential', allowBack: true, allowSkip: false, showPageIndex: true, requireCompletionToAdvance: false };
+          }
+          allLessons.push({ unitTitle: u.title, lesson: l });
+          l.pages.forEach(function(p) {
+            pageIndexMap[p.id] = pCounter;
+            reversePageMap[pCounter] = p.id;
+            pCounter++;
           });
         });
       });
 
-      // Find initial lesson
-      if (bookmark && allLessons.some(function(item) { return item.lesson.id === bookmark; })) {
-        currentLessonId = bookmark;
-      } else if (allLessons.length > 0) {
-        currentLessonId = allLessons[0].lesson.id;
+      var firstLessonId = allLessons.length > 0 ? allLessons[0].lesson.id : '';
+      var firstPageId = (allLessons.length > 0 && allLessons[0].lesson.pages.length > 0) ? allLessons[0].lesson.pages[0].id : '';
+
+      var progressState = {
+        currentLessonId: firstLessonId,
+        currentPageId: firstPageId,
+        completedLessons: {},
+        completedAssessments: {},
+        pages: {}
+      };
+
+      var activeView = 'lesson'; // 'lesson' | 'assessment' | 'completed'
+      var activeAssessmentId = (course.assessments && course.assessments[0]) ? course.assessments[0].id : '';
+      var quizAnswers = {};
+      var accordionOpen = {};
+      var tabActive = {};
+      var flashcardFlipped = {};
+      var navNotice = '';
+
+      // Independent visual sidebar preference stored ONLY in sessionStorage (never in cmi.suspend_data)
+      var SIDEBAR_PREF_KEY = 'edubuilder_scorm_player_sidebar_' + (course.id || 'default');
+      var sidebarOpen = true;
+      try {
+        var savedPref = window.sessionStorage ? window.sessionStorage.getItem(SIDEBAR_PREF_KEY) : null;
+        if (savedPref !== null) {
+          sidebarOpen = (savedPref === 'true');
+        } else if (typeof window.innerWidth === 'number' && window.innerWidth <= 860) {
+          sidebarOpen = false;
+        }
+      } catch (e) {}
+
+      var expandedUnits = {};
+      var expandedLessons = {};
+      (course.units || []).forEach(function(u) {
+        expandedUnits[u.id] = true;
+        (u.lessons || []).forEach(function(l) {
+          expandedLessons[l.id] = true;
+        });
+      });
+
+      function createEmptyRuntime() {
+        return {
+          visited: false,
+          completed: false,
+          scrollPercent: 0,
+          scrolledToBottom: false,
+          interactedIds: [],
+          openedResourceIds: [],
+          confirmedResourceIds: [],
+          questionAttempts: {},
+          questionAnswers: {},
+          questionCorrect: {}
+        };
       }
 
-      function updateScormProgress() {
+      function getPageRuntime(pageId) {
+        if (!progressState.pages[pageId]) {
+          progressState.pages[pageId] = createEmptyRuntime();
+        }
+        return progressState.pages[pageId];
+      }
+
+      // Restore from SCORM API (strictly respecting 1.2 vs 2004 CMI elements)
+      var savedLocation = isScorm2004
+        ? window.ScormBridge.getValue('cmi.location')
+        : window.ScormBridge.getValue('cmi.core.lesson_location');
+      var savedSuspend = window.ScormBridge.getValue('cmi.suspend_data');
+
+      if (savedLocation && typeof savedLocation === 'string') {
+        if (savedLocation.indexOf('|') !== -1) {
+          var parts = savedLocation.split('|');
+          if (parts[0]) progressState.currentLessonId = parts[0];
+          if (parts[1]) progressState.currentPageId = parts[1];
+        } else if (allLessons.some(function(it) { return it.lesson.id === savedLocation; })) {
+          progressState.currentLessonId = savedLocation;
+        }
+      }
+
+      if (savedSuspend) {
+        try {
+          var parsed = JSON.parse(savedSuspend);
+          if (parsed && parsed.v === 2) {
+            if (parsed.cl) progressState.currentLessonId = parsed.cl;
+            if (parsed.cp) progressState.currentPageId = parsed.cp;
+            if (Array.isArray(parsed.ls)) {
+              parsed.ls.forEach(function(id) { progressState.completedLessons[id] = true; });
+            }
+            if (parsed.as && typeof parsed.as === 'object') {
+              progressState.completedAssessments = parsed.as;
+            }
+            if (parsed.pg && typeof parsed.pg === 'object') {
+              Object.keys(parsed.pg).forEach(function(idxStr) {
+                var pageId = reversePageMap[Number(idxStr)];
+                var entry = parsed.pg[idxStr];
+                if (!pageId || !entry) return;
+                progressState.pages[pageId] = {
+                  visited: !!entry.v,
+                  completed: !!entry.c,
+                  scrollPercent: entry.s ? 100 : 0,
+                  scrolledToBottom: !!entry.s,
+                  interactedIds: Array.isArray(entry.i) ? entry.i : [],
+                  openedResourceIds: Array.isArray(entry.o) ? entry.o : [],
+                  confirmedResourceIds: Array.isArray(entry.f) ? entry.f : [],
+                  questionAnswers: entry.a || {},
+                  questionCorrect: entry.ok || {},
+                  questionAttempts: entry.at || {}
+                };
+              });
+            }
+          }
+        } catch(e) {}
+      }
+
+      function serializeSuspendData() {
+        var compactPages = {};
+        Object.keys(progressState.pages).forEach(function(pageId) {
+          var idx = pageIndexMap[pageId];
+          if (idx === undefined) return;
+          var rt = progressState.pages[pageId];
+          if (!rt.visited && !rt.completed && rt.interactedIds.length === 0 && Object.keys(rt.questionAnswers).length === 0) return;
+          var entry = {};
+          if (rt.visited) entry.v = 1;
+          if (rt.completed) entry.c = 1;
+          if (rt.scrolledToBottom) entry.s = 1;
+          if (rt.interactedIds.length > 0) entry.i = rt.interactedIds;
+          if (rt.openedResourceIds.length > 0) entry.o = rt.openedResourceIds;
+          if (rt.confirmedResourceIds.length > 0) entry.f = rt.confirmedResourceIds;
+          if (Object.keys(rt.questionAnswers).length > 0) entry.a = rt.questionAnswers;
+          if (Object.keys(rt.questionCorrect).length > 0) entry.ok = rt.questionCorrect;
+          if (Object.keys(rt.questionAttempts).length > 0) entry.at = rt.questionAttempts;
+          compactPages[String(idx)] = entry;
+        });
+
+        var payload = {
+          v: 2,
+          cl: progressState.currentLessonId,
+          cp: progressState.currentPageId,
+          ls: Object.keys(progressState.completedLessons).filter(function(k) { return progressState.completedLessons[k]; }),
+          as: progressState.completedAssessments,
+          pg: compactPages
+        };
+        var json = JSON.stringify(payload);
+        if (json.length > 4000) {
+          Object.keys(payload.pg).forEach(function(k) {
+            if (payload.pg[k].c) {
+              delete payload.pg[k].i;
+              delete payload.pg[k].at;
+            }
+          });
+          json = JSON.stringify(payload);
+        }
+        return json.slice(0, 4096);
+      }
+
+      function updateScormProgress(commitNow) {
         var total = allLessons.length;
-        var completedCount = Object.keys(completedLessons).filter(function(k) { return completedLessons[k]; }).length;
+        var completedCount = Object.keys(progressState.completedLessons).filter(function(k) { return progressState.completedLessons[k]; }).length;
         var percent = total > 0 ? Math.round((completedCount / total) * 100) : 0;
 
         document.getElementById('overallProgressBar').style.width = percent + '%';
         document.getElementById('overallProgressText').textContent = percent + '% completado';
 
-        // Update SCORM suspend data
-        var state = {
-          completed: completedLessons,
-          quizAnswers: quizAnswers,
-          lastLesson: currentLessonId
-        };
-        window.ScormBridge.setValue('cmi.suspend_data', JSON.stringify(state));
-        window.ScormBridge.setValue('cmi.core.lesson_location', currentLessonId || '');
-        window.ScormBridge.setValue('cmi.location', currentLessonId || '');
+        var locStr = (progressState.currentLessonId || '') + '|' + (progressState.currentPageId || '');
+        var suspendStr = serializeSuspendData();
 
-        if (percent >= 100) {
-          window.ScormBridge.setValue('cmi.core.lesson_status', 'completed');
-          window.ScormBridge.setValue('cmi.completion_status', 'completed');
+        window.ScormBridge.setValue('cmi.suspend_data', suspendStr);
+        if (isScorm2004) {
+          window.ScormBridge.setValue('cmi.location', locStr);
+          window.ScormBridge.setValue('cmi.completion_status', percent >= 100 ? 'completed' : 'incomplete');
         } else {
-          window.ScormBridge.setValue('cmi.core.lesson_status', 'incomplete');
-          window.ScormBridge.setValue('cmi.completion_status', 'incomplete');
+          window.ScormBridge.setValue('cmi.core.lesson_location', locStr);
+          if (percent >= 100 && (!course.assessments || course.assessments.length === 0)) {
+            window.ScormBridge.setValue('cmi.core.lesson_status', 'completed');
+          } else if (Object.keys(progressState.completedAssessments).length === 0) {
+            window.ScormBridge.setValue('cmi.core.lesson_status', percent >= 100 ? 'completed' : 'incomplete');
+          }
         }
-        window.ScormBridge.commit();
+        if (commitNow !== false) {
+          window.ScormBridge.commit();
+        }
       }
+
+      function getPageInteractiveTargets(page) {
+        var targets = [];
+        (page.blocks || []).forEach(function(block) {
+          if (block.type === 'flashcards') {
+            targets.push({
+              blockId: block.id,
+              blockTitle: block.title || 'Tarjetas Flashcards',
+              items: (block.cards || []).map(function(c, i) { return { id: c.id, label: c.front || ('Tarjeta ' + (i + 1)) }; })
+            });
+          } else if (block.type === 'accordion') {
+            targets.push({
+              blockId: block.id,
+              blockTitle: block.title || 'Acordeón',
+              items: (block.items || []).map(function(it, i) { return { id: it.id, label: it.title || ('Elemento ' + (i + 1)) }; })
+            });
+          } else if (block.type === 'tabs') {
+            targets.push({
+              blockId: block.id,
+              blockTitle: block.title || 'Pestañas',
+              items: (block.tabs || []).map(function(t, i) { return { id: t.id, label: t.label || ('Pestaña ' + (i + 1)) }; })
+            });
+          }
+        });
+        return targets;
+      }
+
+      function evaluateSingleRule(rule, page, runtime) {
+        var type = (rule && rule.type) ? rule.type : 'button';
+
+        if (type === 'scrolling') {
+          var pct = Math.min(100, Math.max(0, Math.round(runtime.scrollPercent || 0)));
+          return {
+            met: !!runtime.scrolledToBottom,
+            instruction: 'Desplázate hasta el final del contenido para continuar.',
+            completedMessage: 'Has recorrido todo el contenido de esta sección. Ya puedes continuar.',
+            progressText: pct + '% leído'
+          };
+        }
+
+        if (type === 'question') {
+          var chkBlock = (page.blocks || []).find(function(b) { return b.type === 'checkpoint'; });
+          var qId = rule.questionId || (chkBlock ? chkBlock.questionId : '');
+          var question = (course.questionBank || []).find(function(q) { return q.id === qId; });
+          if (!qId || !question) {
+            return { met: true, instruction: '', completedMessage: 'Avance habilitado.', progressText: '' };
+          }
+          var criteria = rule.questionCriteria || 'correct';
+          var attempts = (runtime.questionAttempts && runtime.questionAttempts[qId]) || 0;
+          var ans = runtime.questionAnswers ? runtime.questionAnswers[qId] : undefined;
+          var hasAnswered = (ans !== undefined && ans !== '');
+          var isCorrect = !!(runtime.questionCorrect && runtime.questionCorrect[qId]);
+          var maxAttempts = rule.maxAttempts || 0;
+
+          if (criteria === 'answered') {
+            return {
+              met: hasAnswered,
+              instruction: 'Responde la pregunta de comprobación para desbloquear la siguiente sección.',
+              completedMessage: 'Respuesta registrada. Puedes continuar a la siguiente sección.',
+              progressText: hasAnswered ? 'Respondida' : 'Pendiente de responder'
+            };
+          }
+          var attText = maxAttempts > 0 ? (' (Intento ' + attempts + '/' + maxAttempts + ')') : '';
+          return {
+            met: isCorrect,
+            instruction: 'Responde correctamente la pregunta para desbloquear la siguiente sección.' + attText,
+            completedMessage: '¡Respuesta correcta! Sección desbloqueada para continuar.',
+            progressText: isCorrect ? 'Correcta' : (hasAnswered ? 'Incorrecta — intenta nuevamente' : 'Pendiente')
+          };
+        }
+
+        if (type === 'interaction') {
+          var targets = getPageInteractiveTargets(page);
+          var targetBlock = (rule.targetBlockId && rule.targetBlockId !== 'any')
+            ? targets.find(function(t) { return t.blockId === rule.targetBlockId; })
+            : null;
+          var candidateItems = targetBlock
+            ? targetBlock.items
+            : targets.reduce(function(acc, t) { return acc.concat(t.items); }, []);
+
+          if (candidateItems.length === 0) {
+            return { met: true, instruction: '', completedMessage: 'Avance disponible.', progressText: '' };
+          }
+
+          var interacted = runtime.interactedIds || [];
+          var iCriteria = rule.interactionCriteria || 'all_items';
+
+          if (iCriteria === 'any_one') {
+            var count1 = candidateItems.filter(function(it) { return interacted.indexOf(it.id) !== -1; }).length;
+            return {
+              met: count1 >= 1,
+              instruction: 'Explora o voltea al menos un elemento interactivo para continuar.',
+              completedMessage: 'Interacción completada. Ya puedes avanzar.',
+              progressText: Math.min(count1, 1) + ' de 1 requerido'
+            };
+          }
+
+          if (iCriteria === 'specific_count') {
+            var req = Math.min(candidateItems.length, Math.max(1, rule.requiredCount || 1));
+            var countN = candidateItems.filter(function(it) { return interacted.indexOf(it.id) !== -1; }).length;
+            return {
+              met: countN >= req,
+              instruction: 'Interactúa con al menos ' + req + ' elementos antes de continuar.',
+              completedMessage: 'Has explorado los elementos requeridos. Ya puedes continuar.',
+              progressText: Math.min(countN, req) + ' de ' + req + ' explorados'
+            };
+          }
+
+          var pool = (rule.requiredItemIds && rule.requiredItemIds.length > 0)
+            ? candidateItems.filter(function(it) { return rule.requiredItemIds.indexOf(it.id) !== -1; })
+            : candidateItems;
+          if (pool.length === 0) pool = candidateItems;
+          var doneCount = pool.filter(function(it) { return interacted.indexOf(it.id) !== -1; }).length;
+          return {
+            met: doneCount >= pool.length,
+            instruction: 'Voltea o explora todos los elementos requeridos para desbloquear la siguiente sección.',
+            completedMessage: 'Todos los elementos han sido explorados. Avance habilitado.',
+            progressText: doneCount + ' de ' + pool.length + ' completados'
+          };
+        }
+
+        if (type === 'resource') {
+          var resBlocks = (page.blocks || []).filter(function(b) { return b.type === 'resource'; });
+          var targetRes = rule.resourceBlockId
+            ? resBlocks.find(function(r) { return r.id === rule.resourceBlockId; })
+            : resBlocks[0];
+          if (!targetRes) {
+            return { met: true, instruction: '', completedMessage: 'Avance disponible.', progressText: '' };
+          }
+          var rCriteria = rule.resourceCriteria || 'confirm_review';
+          var isOpened = (runtime.openedResourceIds || []).indexOf(targetRes.id) !== -1;
+          var isConfirmed = (runtime.confirmedResourceIds || []).indexOf(targetRes.id) !== -1;
+          var rTitle = targetRes.title || targetRes.filename || 'recurso';
+
+          if (rCriteria === 'open_only') {
+            return {
+              met: isOpened,
+              instruction: 'Abre o descarga el archivo "' + rTitle + '" para continuar.',
+              completedMessage: 'Recurso abierto. Ya puedes continuar a la siguiente sección.',
+              progressText: isOpened ? 'Archivo abierto' : 'Pendiente de abrir'
+            };
+          }
+
+          if (rCriteria === 'confirm_activity') {
+            return {
+              met: isOpened && isConfirmed,
+              instruction: 'Abre el recurso "' + rTitle + '" y confirma que realizaste la actividad relacionada para continuar.',
+              completedMessage: 'Actividad confirmada. Ya puedes continuar.',
+              progressText: (isOpened && isConfirmed) ? 'Confirmado' : (isOpened ? 'Archivo abierto · Falta confirmar' : 'Pendiente de abrir y confirmar')
+            };
+          }
+
+          return {
+            met: isOpened && isConfirmed,
+            instruction: 'Abre el recurso "' + rTitle + '" y confirma su revisión para continuar.',
+            completedMessage: 'Revisión confirmada por el estudiante. Ya puedes continuar.',
+            progressText: (isOpened && isConfirmed) ? 'Revisión confirmada' : (isOpened ? 'Archivo abierto · Falta confirmar' : 'Pendiente de abrir y confirmar')
+          };
+        }
+
+        return {
+          met: true,
+          instruction: 'Presiona Siguiente para continuar.',
+          completedMessage: 'Listo para avanzar a la siguiente sección.',
+          progressText: ''
+        };
+      }
+
+      function evaluatePageCondition(page, runtime) {
+        var rule = page.navigationRule || { type: 'button' };
+        var primary = evaluateSingleRule(rule, page, runtime);
+        if (rule.combinator && Array.isArray(rule.secondaryRules) && rule.secondaryRules.length > 0) {
+          var sec = rule.secondaryRules.map(function(sr) { return evaluateSingleRule(sr, page, runtime); });
+          if (rule.combinator === 'AND') {
+            primary.met = primary.met && sec.every(function(r) { return r.met; });
+          } else {
+            primary.met = primary.met || sec.some(function(r) { return r.met; });
+          }
+        }
+        return primary;
+      }
+
+      function canJumpToPage(lesson, targetIdx, currentIdx) {
+        var cfg = lesson.navigationConfig || { mode: 'sequential', allowBack: true, allowSkip: false };
+        var pages = lesson.pages || [];
+        if (targetIdx < 0 || targetIdx >= pages.length) return { allowed: false, reason: 'Página fuera de rango.' };
+        if (targetIdx === currentIdx) return { allowed: true };
+        if (cfg.mode === 'free') return { allowed: true };
+        if (targetIdx < currentIdx) {
+          if (!cfg.allowBack) return { allowed: false, reason: 'Esta lección no permite retroceder.' };
+          return { allowed: true };
+        }
+        if (cfg.allowSkip) return { allowed: true };
+        for (var i = 0; i < targetIdx; i++) {
+          var rt = getPageRuntime(pages[i].id);
+          if (!rt.completed) {
+            return { allowed: false, reason: 'Completa "' + pages[i].title + '" antes de avanzar a esta sección.' };
+          }
+        }
+        return { allowed: true };
+      }
+
+      function getCurrentLessonObj() {
+        return allLessons.find(function(it) { return it.lesson.id === progressState.currentLessonId; }) || allLessons[0];
+      }
+
+      var ICON_PANEL_CLOSE = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>';
+      var ICON_PANEL_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg>';
+
+      function applySidebarState(savePreference) {
+        var sidebarEl = document.getElementById('sidebarContainer');
+        var backdropEl = document.getElementById('sidebarBackdrop');
+        var appEl = document.getElementById('app');
+        var toggleBtn = document.getElementById('toggleSidebarBtn');
+
+        if (sidebarEl) {
+          if (sidebarOpen) {
+            sidebarEl.classList.remove('collapsed');
+          } else {
+            sidebarEl.classList.add('collapsed');
+          }
+          sidebarEl.setAttribute('aria-hidden', String(!sidebarOpen));
+        }
+        if (backdropEl) {
+          if (sidebarOpen) {
+            backdropEl.classList.add('visible');
+          } else {
+            backdropEl.classList.remove('visible');
+          }
+        }
+        if (appEl) {
+          if (sidebarOpen) {
+            appEl.classList.remove('sidebar-hidden');
+          } else {
+            appEl.classList.add('sidebar-hidden');
+          }
+        }
+        if (toggleBtn) {
+          toggleBtn.innerHTML = sidebarOpen ? ICON_PANEL_CLOSE : ICON_PANEL_OPEN;
+          toggleBtn.setAttribute('aria-expanded', String(sidebarOpen));
+          toggleBtn.title = sidebarOpen ? 'Ocultar menú del curso' : 'Mostrar menú del curso';
+        }
+        if (savePreference !== false) {
+          try {
+            if (window.sessionStorage) {
+              window.sessionStorage.setItem(SIDEBAR_PREF_KEY, String(sidebarOpen));
+            }
+          } catch (e) {}
+        }
+      }
+
+      window.toggleSidebar = function(forceState) {
+        sidebarOpen = (typeof forceState === 'boolean') ? forceState : !sidebarOpen;
+        applySidebarState(true);
+      };
+
+      window.toggleUnit = function(unitId) {
+        expandedUnits[unitId] = (expandedUnits[unitId] === false);
+        renderSidebar();
+      };
+
+      window.toggleLessonPages = function(lessonId) {
+        expandedLessons[lessonId] = (expandedLessons[lessonId] === false);
+        renderSidebar();
+      };
+
+      window.jumpToSidebarPage = function(lessonId, pageIdx) {
+        var found = allLessons.find(function(it) { return it.lesson.id === lessonId; });
+        if (!found) return;
+        var les = found.lesson;
+        var pages = les.pages || [];
+        var targetPage = pages[pageIdx];
+        if (!targetPage) return;
+
+        if (les.id === progressState.currentLessonId && activeView === 'lesson') {
+          window.jumpToPage(pageIdx);
+          return;
+        }
+        var perm = canJumpToPage(les, pageIdx, 0);
+        if (!perm.allowed) {
+          navNotice = perm.reason || 'Completa las secciones anteriores primero.';
+          renderActivePage(true);
+          return;
+        }
+        navNotice = '';
+        progressState.currentLessonId = les.id;
+        progressState.currentPageId = targetPage.id;
+        updateScormProgress(true);
+        renderActivePage(false);
+      };
 
       function renderSidebar() {
         var sidebar = document.getElementById('sidebarContainer');
-        var html = '';
+        if (!sidebar) return;
+        var curLessonObj = getCurrentLessonObj();
+        var curPages = (curLessonObj && curLessonObj.lesson.pages) ? curLessonObj.lesson.pages : [];
+        var curPageIdx = Math.max(0, curPages.findIndex(function(p) { return p.id === progressState.currentPageId; }));
 
-        course.units.forEach(function(unit) {
-          html += '<div class="unit-header">' + escapeHtml(unit.title) + '</div>';
-          unit.lessons.forEach(function(les) {
-            var isActive = (les.id === currentLessonId);
-            var isDone = !!completedLessons[les.id];
-            html += '<button class="lesson-nav-btn' + (isActive ? ' active' : '') + '" onclick="window.loadLesson(\\'' + les.id + '\\')">';
-            html += '  <span style="display:flex;align-items:center;gap:10px;">';
-            html += '    <span class="lesson-status-icon' + (isDone ? ' completed' : '') + '">' + (isDone ? '✓' : '') + '</span>';
-            html += '    <span>' + escapeHtml(les.title) + '</span>';
-            html += '  </span>';
-            html += '  <span style="font-size:12px;color:#94a3b8;">' + (les.estimatedMinutes || 5) + 'm</span>';
-            html += '</button>';
-          });
+        var html = '<div class="sidebar-inner">';
+        html += '  <div class="sidebar-top-bar">';
+        html += '    <span class="sidebar-top-title">Contenido del Curso</span>';
+        html += '    <button type="button" class="sidebar-close-btn" onclick="window.toggleSidebar(false)" title="Ocultar menú del curso" aria-label="Ocultar menú del curso">' + ICON_PANEL_CLOSE + '</button>';
+        html += '  </div>';
+        html += '  <div class="sidebar-scroll">';
+
+        (course.units || []).forEach(function(unit) {
+          var isUnitOpen = (expandedUnits[unit.id] !== false);
+          html += '<div class="unit-group">';
+          html += '  <button type="button" class="unit-toggle-btn" onclick="window.toggleUnit(\\'' + escapeAttr(unit.id) + '\\')">';
+          html += '    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(unit.title) + '</span>';
+          html += '    <span>' + (isUnitOpen ? '▾' : '▸') + '</span>';
+          html += '  </button>';
+
+          if (isUnitOpen) {
+            html += '  <div class="unit-lessons-list">';
+            (unit.lessons || []).forEach(function(les) {
+              var isActive = (activeView === 'lesson' && les.id === progressState.currentLessonId);
+              var isDone = !!progressState.completedLessons[les.id];
+              var isLesOpen = (expandedLessons[les.id] !== undefined) ? expandedLessons[les.id] : isActive;
+              var pages = les.pages || [];
+
+              html += '<div class="lesson-nav-group">';
+              html += '  <div class="lesson-nav-row' + (isActive ? ' active' : '') + '">';
+              html += '    <button type="button" class="lesson-nav-btn' + (isActive ? ' active' : '') + '" onclick="window.loadLesson(\\'' + escapeAttr(les.id) + '\\')">';
+              html += '      <span style="display:flex;align-items:center;gap:8px;min-width:0;">';
+              html += '        <span class="lesson-status-icon' + (isDone ? ' completed' : '') + '">' + (isDone ? '✓' : '') + '</span>';
+              html += '        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(les.title) + '</span>';
+              html += '      </span>';
+              html += '    </button>';
+              html += '    <button type="button" class="lesson-pages-toggle" onclick="window.toggleLessonPages(\\'' + escapeAttr(les.id) + '\\')" title="Ver secciones">' + pages.length + ' pág ' + (isLesOpen ? '▾' : '▸') + '</button>';
+              html += '  </div>';
+
+              if (isLesOpen && pages.length > 0) {
+                html += '  <div class="sidebar-pages-list">';
+                pages.forEach(function(p, pIdx) {
+                  var isPageAct = (activeView === 'lesson' && p.id === progressState.currentPageId);
+                  var isPageDone = !!getPageRuntime(p.id).completed;
+                  var perm = (les.id === progressState.currentLessonId)
+                    ? canJumpToPage(les, pIdx, curPageIdx)
+                    : canJumpToPage(les, pIdx, 0);
+                  var pCls = 'sidebar-page-btn' + (isPageAct ? ' active' : (isPageDone ? ' completed' : (perm.allowed ? '' : ' locked')));
+                  html += '    <button type="button" class="' + pCls + '" onclick="window.jumpToSidebarPage(\\'' + escapeAttr(les.id) + '\\', ' + pIdx + ')" title="' + escapeAttr(perm.allowed ? p.title : (perm.reason || '')) + '">';
+                  html += '      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (pIdx + 1) + '. ' + escapeHtml(p.title) + '</span>';
+                  if (isPageDone) html += '<span style="color:#16a34a;font-weight:700;">✓</span>';
+                  else if (!perm.allowed && !isPageAct) html += '<span>🔒</span>';
+                  html += '    </button>';
+                });
+                html += '  </div>';
+              }
+              html += '</div>';
+            });
+            html += '  </div>';
+          }
+          html += '</div>';
         });
 
         if (course.assessments && course.assessments.length > 0) {
           html += '<div class="unit-header">Evaluación Final</div>';
           course.assessments.forEach(function(exam) {
-            var isActive = (currentLessonId === exam.id);
-            var isPassed = quizScore >= (exam.passingScore || 70);
-            html += '<button class="lesson-nav-btn' + (isActive ? ' active' : '') + '" onclick="window.loadAssessment(\\'' + exam.id + '\\')">';
-            html += '  <span style="display:flex;align-items:center;gap:10px;">';
-            html += '    <span class="lesson-status-icon' + (isPassed ? ' completed' : '') + '">' + (isPassed ? '★' : '?') + '</span>';
-            html += '    <span>' + escapeHtml(exam.title) + '</span>';
-            html += '  </span>';
-            html += '  <span style="font-size:12px;color:#94a3b8;">Examen</span>';
-            html += '</button>';
-          });
-        }
-
-        sidebar.innerHTML = html;
-      }
-
-      function renderLesson(lessonId) {
-        currentLessonId = lessonId;
-        var found = null;
-        for (var i = 0; i < allLessons.length; i++) {
-          if (allLessons[i].lesson.id === lessonId) {
-            found = allLessons[i];
-            break;
-          }
-        }
-        if (!found) return;
-
-        var les = found.lesson;
-        var content = document.getElementById('contentContainer');
-        var html = '';
-
-        // Breadcrumbs and header
-        html += '<div class="lesson-header-area">';
-        html += '  <div class="lesson-breadcrumbs">' + escapeHtml(found.unitTitle) + ' / Lección</div>';
-        html += '  <h2 class="lesson-main-title">' + escapeHtml(les.title) + '</h2>';
-        if (les.summary) {
-          html += '  <p class="lesson-summary">' + escapeHtml(les.summary) + '</p>';
-        }
-        html += '</div>';
-
-        // Render blocks
-        if (les.blocks && les.blocks.length > 0) {
-          les.blocks.forEach(function(block) {
-            html += '<div class="content-block">';
-            if (block.title) {
-              html += '<h3 class="block-title">' + escapeHtml(block.title) + '</h3>';
-            }
-
-            if (block.type === 'text') {
-              html += '<div class="block-text">' + block.content + '</div>';
-            } else if (block.type === 'callout') {
-              var calloutLabels = {
-                tip: '💡 Consejo Práctico',
-                warning: '⚠️ Advertencia Importante',
-                info: 'ℹ️ Información Clave',
-                definition: '📖 Definición Teórica',
-                example: '🔍 Ejemplo Resuelto',
-                activity: '⚡ Actividad de Aplicación',
-                reflection: '🤔 Pregunta de Reflexión'
-              };
-              var cLabel = calloutLabels[block.variant] || '💡 Nota Didáctica';
-              html += '<div class="callout-box ' + (block.variant || 'info') + '">';
-              html += '  <div class="callout-title">' + cLabel + (block.title ? ': ' + escapeHtml(block.title) : '') + '</div>';
-              html += '  <div class="callout-content">' + block.content + '</div>';
-              html += '</div>';
-            } else if (block.type === 'math') {
-              html += '<div class="block-math">';
-              html += '  <div class="math-container">' + (block.displayMode ? '$$' : '$') + block.latex + (block.displayMode ? '$$' : '$') + '</div>';
-              if (block.caption) html += '  <div class="math-caption">' + escapeHtml(block.caption) + '</div>';
-              html += '</div>';
-            } else if (block.type === 'resource') {
-              html += '<div class="block-resource">';
-              html += '  <div>';
-              html += '    <div class="resource-title">📁 ' + escapeHtml(block.title || block.filename || 'Material Descargable') + '</div>';
-              if (block.description) html += '    <div class="resource-desc">' + escapeHtml(block.description) + '</div>';
-              html += '    <div style="font-size:11px;color:#94a3b8;margin-top:4px;font-family:monospace;">' + escapeHtml(block.filename || '') + '</div>';
-              html += '  </div>';
-              if (block.relativePath) {
-                html += '  <a href="' + escapeHtml(block.relativePath) + '" download="' + escapeHtml(block.filename || 'recurso') + '" class="resource-download-btn">⬇️ Descargar Material</a>';
-              }
-              html += '</div>';
-            } else if (block.type === 'accordion') {
-              html += '<div class="accordion-group">';
-              (block.items || []).forEach(function(item, idx) {
-                html += '<div class="accordion-item" id="acc_' + item.id + '">';
-                html += '  <button class="accordion-trigger" onclick="window.toggleAccordion(\\'' + item.id + '\\')">';
-                html += '    <span>' + escapeHtml(item.title) + '</span>';
-                html += '    <span>▼</span>';
-                html += '  </button>';
-                html += '  <div class="accordion-content">' + escapeHtml(item.content) + '</div>';
-                html += '</div>';
-              });
-              html += '</div>';
-            } else if (block.type === 'tabs') {
-              html += '<div class="tabs-container" id="tabs_' + block.id + '">';
-              html += '  <div class="tabs-nav">';
-              (block.tabs || []).forEach(function(tab, tIdx) {
-                html += '    <button class="tab-nav-btn' + (tIdx === 0 ? ' active' : '') + '" onclick="window.switchTab(\\'' + block.id + '\\', ' + tIdx + ')" id="tab_btn_' + block.id + '_' + tIdx + '">' + escapeHtml(tab.label) + '</button>';
-              });
-              html += '  </div>';
-              (block.tabs || []).forEach(function(tab, tIdx) {
-                html += '  <div class="tab-panel" id="tab_panel_' + block.id + '_' + tIdx + '" style="display:' + (tIdx === 0 ? 'block' : 'none') + '">' + escapeHtml(tab.content) + '</div>';
-              });
-              html += '</div>';
-            } else if (block.type === 'flashcards') {
-              html += '<div class="flashcards-grid">';
-              (block.cards || []).forEach(function(card) {
-                html += '<div class="flashcard" onclick="this.classList.toggle(\\'flipped\\')">';
-                html += '  <div class="flashcard-inner">';
-                html += '    <div class="flashcard-front">';
-                html += '      <strong style="font-size:15px;">' + escapeHtml(card.front) + '</strong>';
-                if (card.hint) {
-                  html += '      <span class="card-hint">💡 ' + escapeHtml(card.hint) + '</span>';
-                }
-                html += '      <span style="font-size:11px;color:#94a3b8;margin-top:12px;">Clic para voltear ↺</span>';
-                html += '    </div>';
-                html += '    <div class="flashcard-back">';
-                html += '      <p style="font-size:14px;">' + escapeHtml(card.back) + '</p>';
-                html += '    </div>';
-                html += '  </div>';
-                html += '</div>';
-              });
-              html += '</div>';
-            } else if (block.type === 'checkpoint') {
-              var q = (course.questionBank || []).find(function(item) { return item.id === block.questionId; });
-              if (q) {
-                html += renderCheckpointQuestion(q);
-              }
-            } else if (block.type === 'media') {
-              if (block.mediaType === 'image') {
-                html += '<div style="margin:16px 0;text-align:center;"><img src="' + escapeHtml(block.url) + '" alt="' + escapeHtml(block.altText || '') + '" style="max-width:100%;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">';
-                if (block.caption) html += '<p style="font-size:12px;color:#64748b;margin-top:6px;">' + escapeHtml(block.caption) + '</p>';
-                html += '</div>';
-              } else if (block.mediaType === 'video_embed') {
-                html += '<div style="margin:16px 0;position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:8px;"><iframe src="' + escapeHtml(block.url) + '" style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;" allowfullscreen></iframe></div>';
-              }
-            }
+            var isActive = (activeView === 'assessment' && activeAssessmentId === exam.id);
+            var saved = progressState.completedAssessments[exam.id];
+            var isPassed = saved && saved.passed;
+            html += '<div class="lesson-nav-row' + (isActive ? ' active' : '') + '" style="margin-bottom:4px;">';
+            html += '  <button type="button" class="lesson-nav-btn' + (isActive ? ' active' : '') + '" onclick="window.loadAssessment(\\'' + escapeAttr(exam.id) + '\\')">';
+            html += '    <span style="display:flex;align-items:center;gap:8px;min-width:0;">';
+            html += '      <span class="lesson-status-icon' + (isPassed ? ' completed' : '') + '">' + (isPassed ? '★' : '?') + '</span>';
+            html += '      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(exam.title) + '</span>';
+            html += '    </span>';
+            html += '    <span style="font-size:11px;opacity:0.8;flex-shrink:0;">' + (saved ? (saved.score + '%') : 'Test') + '</span>';
+            html += '  </button>';
             html += '</div>';
           });
         }
 
-        // Navigation bottom buttons
-        var currIdx = -1;
-        for (var k = 0; k < allLessons.length; k++) {
-          if (allLessons[k].lesson.id === lessonId) {
-            currIdx = k;
-            break;
+        html += '  </div>';
+        html += '</div>';
+        sidebar.innerHTML = html;
+      }
+
+      function renderInteractiveQuestionHtml(q, page, runtime) {
+        var rule = page.navigationRule || { type: 'button' };
+        var userAnswer = runtime.questionAnswers ? runtime.questionAnswers[q.id] : undefined;
+        var isCorrect = !!(runtime.questionCorrect && runtime.questionCorrect[q.id]);
+        var attempts = (runtime.questionAttempts && runtime.questionAttempts[q.id]) || 0;
+        var isChecked = (userAnswer !== undefined && userAnswer !== '');
+        var showFeedback = (rule.type === 'question') ? (rule.showFeedback !== false) : true;
+        var maxAttempts = (rule.type === 'question') ? (rule.maxAttempts || 0) : 0;
+        var locked = (maxAttempts > 0 && attempts >= maxAttempts) || (rule.type === 'question' && rule.allowRetry === false && attempts >= 1);
+
+        var h = '<div class="quiz-wrapper">';
+        h += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+        h += '    <span style="font-size:12px;font-weight:700;color:#1d4ed8;">📝 Comprobación de Aprendizaje</span>';
+        if (maxAttempts > 0) {
+          h += '    <span style="font-size:11px;font-family:monospace;background:#fff;padding:2px 8px;border:1px solid #bfdbfe;border-radius:5px;">Intentos: ' + attempts + '/' + maxAttempts + '</span>';
+        }
+        h += '  </div>';
+        h += '  <div class="question-prompt">' + escapeHtml(q.prompt) + '</div>';
+
+        if (q.type === 'multiple_choice') {
+          (q.options || []).forEach(function(opt) {
+            var isChosen = (userAnswer === opt.id);
+            var cls = 'option-choice';
+            if (isChosen) cls += isCorrect ? ' correct' : ' incorrect';
+            h += '<button type="button" class="' + cls + '" ' + ((locked && !isChosen) ? 'disabled' : '') + ' onclick="window.answerPageQuestion(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(opt.id) + '\\')">';
+            h += '  <span>' + escapeHtml(opt.text) + '</span>';
+            if (isChosen) h += '  <span>' + (isCorrect ? '✓' : '✕') + '</span>';
+            h += '</button>';
+          });
+        } else if (q.type === 'true_false') {
+          h += '<div style="display:flex;gap:10px;">';
+          [{ val: 'true', label: 'Verdadero' }, { val: 'false', label: 'Falso' }].forEach(function(it) {
+            var isChosen = (userAnswer === it.val);
+            var cls = 'option-choice';
+            if (isChosen) cls += isCorrect ? ' correct' : ' incorrect';
+            h += '<button type="button" class="' + cls + '" style="flex:1;justify-content:center;" ' + (locked ? 'disabled' : '') + ' onclick="window.answerPageQuestion(\\'' + escapeAttr(q.id) + '\\', \\'' + it.val + '\\')">' + it.label + '</button>';
+          });
+          h += '</div>';
+        } else if (q.type === 'fill_blank') {
+          h += '<div style="display:flex;gap:8px;">';
+          h += '  <input type="text" id="blank_inp_' + escapeAttr(q.id) + '" value="' + escapeAttr(userAnswer || '') + '" ' + (locked ? 'disabled' : '') + ' placeholder="Escribe tu respuesta..." style="flex:1;padding:9px 12px;border:1px solid #cbd5e1;border-radius:7px;font-size:14px;">';
+          h += '  <button type="button" class="btn-primary" ' + (locked ? 'disabled' : '') + ' onclick="window.submitBlankQuestion(\\'' + escapeAttr(q.id) + '\\')">Comprobar</button>';
+          h += '</div>';
+        }
+
+        if (isChecked && showFeedback) {
+          h += '<div class="feedback-box ' + (isCorrect ? 'feedback-correct' : 'feedback-incorrect') + '">';
+          h += '  <strong>' + (isCorrect ? '¡Correcto! Has asimilado este concepto.' : 'Respuesta incorrecta.') + '</strong>';
+          if (q.explanation) h += '<div style="margin-top:4px;">' + escapeHtml(q.explanation) + '</div>';
+          h += '</div>';
+        }
+
+        h += '</div>';
+        return h;
+      }
+
+      function renderActivePage(preserveScroll) {
+        activeView = 'lesson';
+        var found = getCurrentLessonObj();
+        if (!found) return;
+
+        var les = found.lesson;
+        var pages = les.pages || [];
+        var pageIdx = pages.findIndex(function(p) { return p.id === progressState.currentPageId; });
+        if (pageIdx === -1) {
+          pageIdx = 0;
+          progressState.currentPageId = pages[0] ? pages[0].id : '';
+        }
+        var page = pages[pageIdx];
+        if (!page) return;
+
+        var runtime = getPageRuntime(page.id);
+        if (!runtime.visited) {
+          runtime.visited = true;
+        }
+        var evalRes = evaluatePageCondition(page, runtime);
+        if (evalRes.met && page.navigationRule && page.navigationRule.type !== 'button') {
+          runtime.completed = true;
+        }
+
+        var cfg = les.navigationConfig || { mode: 'sequential', allowBack: true, allowSkip: false, showPageIndex: true, requireCompletionToAdvance: false };
+        var completedPagesCount = pages.filter(function(p) {
+          var rt = getPageRuntime(p.id);
+          return rt.completed || (p.id === page.id && evalRes.met);
+        }).length;
+        var lessonPct = pages.length > 0 ? Math.round((completedPagesCount / pages.length) * 100) : 100;
+
+        var viewport = document.getElementById('viewportContainer');
+        var prevScrollTop = 0;
+        var existingScrollEl = document.getElementById('pageScrollArea');
+        if (preserveScroll && existingScrollEl) {
+          prevScrollTop = existingScrollEl.scrollTop;
+        }
+
+        var html = '';
+
+        // 1. Page Top Header
+        html += '<div class="page-top-header">';
+        html += '  <div class="page-header-row">';
+        html += '    <div style="min-width:0;">';
+        html += '      <div class="lesson-breadcrumbs">' + escapeHtml(found.unitTitle) + ' · ' + escapeHtml(les.title) + '</div>';
+        html += '      <h2 class="page-main-title">' + escapeHtml(page.title) + '</h2>';
+        html += '    </div>';
+        html += '    <div class="page-progress-meta">';
+        html += '      <div class="page-progress-text">';
+        html += '        <div>Página ' + (pageIdx + 1) + ' de ' + pages.length + '</div>';
+        html += '        <div class="page-progress-sub">Progreso lección: ' + lessonPct + '%</div>';
+        html += '      </div>';
+        html += '      <div class="mini-progress-bg"><div class="mini-progress-fill" style="width:' + lessonPct + '%"></div></div>';
+        html += '    </div>';
+        html += '  </div>';
+
+        if (cfg.showPageIndex !== false && pages.length > 1) {
+          html += '  <div class="page-index-bar">';
+          pages.forEach(function(p, idx) {
+            var isAct = (p.id === page.id);
+            var isComp = !!getPageRuntime(p.id).completed;
+            var perm = canJumpToPage(les, idx, pageIdx);
+            var pCls = 'page-pill' + (isAct ? ' active' : (isComp ? ' completed' : (perm.allowed ? '' : ' locked')));
+            html += '<button type="button" class="' + pCls + '" onclick="window.jumpToPage(' + idx + ')" title="' + escapeAttr(perm.allowed ? p.title : (perm.reason || '')) + '">';
+            if (!perm.allowed && !isAct) html += '🔒 ';
+            else if (isComp && !isAct) html += '✓ ';
+            html += (idx + 1) + '. ' + escapeHtml(p.title);
+            html += '</button>';
+          });
+          html += '  </div>';
+        }
+        html += '</div>';
+
+        // 2. Isolated Scrollable Page Content Area (ONLY current page!)
+        html += '<div class="page-scroll-area" id="pageScrollArea">';
+        html += '  <div class="page-inner-container">';
+
+        (page.blocks || []).forEach(function(block) {
+          html += '<div class="content-block">';
+          if (block.title) {
+            html += '<h3 class="block-title">' + escapeHtml(block.title) + '</h3>';
+          }
+
+          if (block.type === 'text') {
+            html += '<div class="block-text">' + (block.content || '') + '</div>';
+          } else if (block.type === 'callout') {
+            var calloutLabels = {
+              tip: '💡 Consejo Práctico',
+              warning: '⚠️ Advertencia Importante',
+              info: 'ℹ️ Información Clave',
+              definition: '📖 Definición Teórica',
+              example: '🔍 Ejemplo Resuelto',
+              activity: '⚡ Actividad de Aplicación',
+              reflection: '🤔 Pregunta de Reflexión'
+            };
+            var cLabel = calloutLabels[block.variant] || '💡 Nota Didáctica';
+            html += '<div class="callout-box ' + escapeAttr(block.variant || 'info') + '">';
+            html += '  <div class="callout-title">' + cLabel + '</div>';
+            html += '  <div class="callout-content">' + (block.content || '') + '</div>';
+            html += '</div>';
+          } else if (block.type === 'math') {
+            html += '<div class="block-math">';
+            html += '  <div class="math-container">' + (block.displayMode !== false ? '$$' : '$') + (block.latex || '') + (block.displayMode !== false ? '$$' : '$') + '</div>';
+            if (block.caption) html += '  <div class="math-caption">' + escapeHtml(block.caption) + '</div>';
+            html += '</div>';
+          } else if (block.type === 'resource') {
+            var isOpened = (runtime.openedResourceIds || []).indexOf(block.id) !== -1;
+            var isConfirmed = (runtime.confirmedResourceIds || []).indexOf(block.id) !== -1;
+            var pRule = page.navigationRule || {};
+            var needsConfirm = (pRule.type === 'resource') && (!pRule.resourceBlockId || pRule.resourceBlockId === block.id) && pRule.resourceCriteria !== 'open_only';
+            var confirmText = (pRule.resourceCriteria === 'confirm_activity')
+              ? 'Confirmo que completé la actividad relacionada con este recurso'
+              : 'Confirmo que he revisado y comprendido este recurso';
+
+            html += '<div class="block-resource">';
+            html += '  <div class="resource-top-row">';
+            html += '    <div>';
+            html += '      <div class="resource-title">📁 ' + escapeHtml(block.title || block.filename || 'Material Descargable') + '</div>';
+            if (block.description) html += '      <div class="resource-desc">' + escapeHtml(block.description) + '</div>';
+            html += '      <div style="font-size:11px;color:#64748b;margin-top:4px;font-family:monospace;">' + escapeHtml(block.filename || '') + (isOpened ? ' · <strong style="color:#1d4ed8;font-family:sans-serif;">Archivo abierto</strong>' : '') + '</div>';
+            html += '    </div>';
+            if (block.relativePath) {
+              html += '    <a href="' + escapeAttr(block.relativePath) + '" download="' + escapeAttr(block.filename || 'recurso') + '" class="resource-download-btn" onclick="window.openResource(\\'' + escapeAttr(block.id) + '\\')">⬇️ ' + (isOpened ? 'Volver a abrir' : 'Abrir / Descargar') + '</a>';
+            } else {
+              html += '    <button type="button" class="resource-download-btn" onclick="window.openResource(\\'' + escapeAttr(block.id) + '\\')">📂 Abrir Recurso</button>';
+            }
+            html += '  </div>';
+            if (needsConfirm) {
+              html += '  <div class="resource-confirm-box">';
+              html += '    <button type="button" class="resource-confirm-btn' + (isConfirmed ? ' confirmed' : '') + '" ' + (!isOpened ? 'disabled' : '') + ' onclick="window.confirmResource(\\'' + escapeAttr(block.id) + '\\')">';
+              html += (isConfirmed ? '☑ ' : '☐ ') + confirmText;
+              html += '    </button>';
+              if (!isOpened) {
+                html += '<div style="font-size:11px;color:#7e22ce;margin-top:5px;">Primero abre o descarga el archivo para habilitar la confirmación.</div>';
+              }
+              html += '  </div>';
+            }
+            html += '</div>';
+          } else if (block.type === 'accordion') {
+            html += '<div>';
+            (block.items || []).forEach(function(item) {
+              var isOpen = !!accordionOpen[item.id];
+              var wasInt = (runtime.interactedIds || []).indexOf(item.id) !== -1;
+              html += '<div class="accordion-item' + (isOpen ? ' open' : '') + (wasInt ? ' interacted' : '') + '">';
+              html += '  <button type="button" class="accordion-trigger" onclick="window.toggleAccordion(\\'' + escapeAttr(item.id) + '\\')">';
+              html += '    <span>' + (wasInt ? '✓ ' : '') + escapeHtml(item.title) + '</span>';
+              html += '    <span>' + (isOpen ? '▲' : '▼') + '</span>';
+              html += '  </button>';
+              html += '  <div class="accordion-content">' + escapeHtml(item.content) + '</div>';
+              html += '</div>';
+            });
+            html += '</div>';
+          } else if (block.type === 'tabs') {
+            var activeIdx = tabActive[block.id] || 0;
+            html += '<div class="tabs-container">';
+            html += '  <div class="tabs-nav">';
+            (block.tabs || []).forEach(function(tab, tIdx) {
+              var wasInt = (runtime.interactedIds || []).indexOf(tab.id) !== -1;
+              html += '    <button type="button" class="tab-nav-btn' + (tIdx === activeIdx ? ' active' : '') + '" onclick="window.switchTab(\\'' + escapeAttr(block.id) + '\\', ' + tIdx + ', \\'' + escapeAttr(tab.id) + '\\')">' + (wasInt ? '✓ ' : '') + escapeHtml(tab.label) + '</button>';
+            });
+            html += '  </div>';
+            var currentTab = (block.tabs || [])[activeIdx];
+            html += '  <div class="tab-panel">' + escapeHtml(currentTab ? currentTab.content : '') + '</div>';
+            html += '</div>';
+          } else if (block.type === 'flashcards') {
+            html += '<div class="flashcards-grid">';
+            (block.cards || []).forEach(function(card) {
+              var isFlip = !!flashcardFlipped[card.id];
+              var wasInt = (runtime.interactedIds || []).indexOf(card.id) !== -1;
+              html += '<div class="flashcard' + (isFlip ? ' flipped' : '') + (wasInt ? ' interacted' : '') + '" onclick="window.flipCard(\\'' + escapeAttr(card.id) + '\\')">';
+              html += '  <div class="flashcard-inner">';
+              html += '    <div class="flashcard-front">';
+              if (wasInt) html += '<span class="card-badge">✓ Explorada</span>';
+              html += '      <strong style="font-size:14px;">' + escapeHtml(card.front) + '</strong>';
+              if (card.hint) html += '<span style="font-size:12px;color:#64748b;margin-top:6px;">💡 ' + escapeHtml(card.hint) + '</span>';
+              html += '      <span style="font-size:11px;color:#2563eb;margin-top:10px;">Clic para voltear ↺</span>';
+              html += '    </div>';
+              html += '    <div class="flashcard-back">';
+              html += '      <p style="font-size:14px;">' + escapeHtml(card.back) + '</p>';
+              html += '      <span style="font-size:11px;opacity:0.8;margin-top:10px;">Clic para volver ↺</span>';
+              html += '    </div>';
+              html += '  </div>';
+              html += '</div>';
+            });
+            html += '</div>';
+          } else if (block.type === 'checkpoint') {
+            var q = (course.questionBank || []).find(function(item) { return item.id === block.questionId; });
+            if (q) html += renderInteractiveQuestionHtml(q, page, runtime);
+          } else if (block.type === 'media') {
+            if (block.mediaType === 'image' && block.url) {
+              html += '<div style="text-align:center;"><img src="' + escapeAttr(block.url) + '" alt="' + escapeAttr(block.altText || '') + '" style="max-width:100%;border-radius:10px;border:1px solid #e2e8f0;">';
+              if (block.caption) html += '<p style="font-size:12px;color:#64748b;margin-top:6px;">' + escapeHtml(block.caption) + '</p>';
+              html += '</div>';
+            } else if (block.mediaType === 'video_embed' && block.url) {
+              html += '<div style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:10px;"><iframe src="' + escapeAttr(block.url) + '" style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;" allowfullscreen></iframe></div>';
+            } else if (block.mediaType === 'audio' && block.url) {
+              html += '<audio controls src="' + escapeAttr(block.url) + '" style="width:100%;"></audio>';
+            } else if (block.mediaType === 'video_file' && block.url) {
+              html += '<video controls src="' + escapeAttr(block.url) + '" style="width:100%;border-radius:10px;"></video>';
+            }
+          }
+          html += '</div>';
+        });
+
+        // Implicit question if rule references a question not explicitly inserted in page blocks
+        if (page.navigationRule && page.navigationRule.type === 'question' && page.navigationRule.questionId) {
+          var alreadyInPage = (page.blocks || []).some(function(b) { return b.type === 'checkpoint' && b.questionId === page.navigationRule.questionId; });
+          if (!alreadyInPage) {
+            var implicitQ = (course.questionBank || []).find(function(q) { return q.id === page.navigationRule.questionId; });
+            if (implicitQ) html += renderInteractiveQuestionHtml(implicitQ, page, runtime);
           }
         }
 
-        html += '<div class="lesson-footer-nav">';
-        if (currIdx > 0) {
-          html += '<button class="btn-secondary" onclick="window.loadLesson(\\'' + allLessons[currIdx - 1].lesson.id + '\\')">← Lección Anterior</button>';
+        // Placeholder for short non-scrollable SCROLLING pages
+        html += '<div id="shortScrollFallback"></div>';
+
+        html += '  </div>';
+        html += '</div>';
+
+        // 3. Fixed Footer Navigation & Condition Banner
+        var currLessonIdx = allLessons.findIndex(function(it) { return it.lesson.id === les.id; });
+        var isLastPage = (pageIdx >= pages.length - 1);
+        var canGoBack = (pageIdx > 0 && cfg.allowBack !== false && page.allowBackOverride !== false);
+        var isLessonDone = !!progressState.completedLessons[les.id];
+
+        html += '<div class="page-footer-area">';
+        if (navNotice) {
+          html += '  <div class="nav-notice-banner">⚠️ ' + escapeHtml(navNotice) + '</div>';
+        }
+        html += '  <div class="condition-banner ' + (evalRes.met ? 'unlocked' : 'locked') + '" id="conditionBanner">';
+        html += '    <span>' + (evalRes.met ? '✓ ' + escapeHtml(evalRes.completedMessage) : '🔒 ' + escapeHtml(evalRes.instruction)) + '</span>';
+        if (evalRes.progressText) {
+          html += '    <span class="condition-progress-badge" id="conditionProgressBadge">' + escapeHtml(evalRes.progressText) + '</span>';
+        }
+        html += '  </div>';
+
+        html += '  <div class="lesson-footer-nav">';
+        html += '    <button type="button" class="btn-secondary" ' + (!canGoBack ? 'disabled' : '') + ' onclick="window.prevPage()">← Anterior</button>';
+        html += '    <div style="display:flex;gap:10px;flex-wrap:wrap;">';
+        if (!isLastPage) {
+          html += '      <button type="button" class="btn-primary" id="nextPageBtn" ' + (!evalRes.met ? 'disabled' : '') + ' onclick="window.nextPage()">Siguiente →</button>';
         } else {
-          html += '<div></div>';
+          html += '      <button type="button" class="btn-success" id="completeLessonBtn" ' + (!evalRes.met ? 'disabled' : '') + ' onclick="window.markLessonCompleted(\\'' + escapeAttr(les.id) + '\\')">' + (isLessonDone ? '✓ Lección Completada' : 'Marcar Lección Completada') + '</button>';
+          if (currLessonIdx < allLessons.length - 1) {
+            html += '      <button type="button" class="btn-primary" id="nextLessonBtn" ' + (!evalRes.met ? 'disabled' : '') + ' onclick="window.advanceToNextLesson(\\'' + escapeAttr(allLessons[currLessonIdx + 1].lesson.id) + '\\')">Siguiente Lección →</button>';
+          } else if (course.assessments && course.assessments.length > 0) {
+            html += '      <button type="button" class="btn-primary" id="goExamBtn" ' + (!evalRes.met ? 'disabled' : '') + ' onclick="window.loadAssessment(\\'' + escapeAttr(course.assessments[0].id) + '\\')">Ir a la Evaluación Final →</button>';
+          } else {
+            html += '      <button type="button" class="btn-primary" id="finishCourseBtn" ' + (!evalRes.met ? 'disabled' : '') + ' onclick="window.finishCourseView(\\'' + escapeAttr(les.id) + '\\')">Finalizar Curso 🎓</button>';
+          }
         }
-
-        var isDone = completedLessons[lessonId];
-        html += '<div style="display:flex;gap:12px;">';
-        html += '  <button class="btn-primary" onclick="window.markLessonCompleted(\\'' + lessonId + '\\')">';
-        html += (isDone ? '✓ Lección Completada' : 'Marcar como Completada');
-        html += '  </button>';
-
-        if (currIdx < allLessons.length - 1) {
-          html += '  <button class="btn-secondary" onclick="window.loadLesson(\\'' + allLessons[currIdx + 1].lesson.id + '\\')">Siguiente Lección →</button>';
-        } else if (course.assessments && course.assessments.length > 0) {
-          html += '  <button class="btn-primary" onclick="window.loadAssessment(\\'' + course.assessments[0].id + '\\')">Ir a la Evaluación Final →</button>';
-        }
-        html += '</div>';
+        html += '    </div>';
+        html += '  </div>';
         html += '</div>';
 
-        content.innerHTML = html;
+        viewport.innerHTML = html;
+
+        // Render KaTeX formulas
         if (window.renderMathInElement) {
           try {
-            window.renderMathInElement(content, {
+            window.renderMathInElement(document.getElementById('pageScrollArea'), {
               delimiters: [
                 { left: '$$', right: '$$', display: true },
                 { left: '$', right: '$', display: false }
               ],
               throwOnError: false
             });
-          } catch(err) {
-            console.warn('KaTeX render error:', err);
-          }
+          } catch(err) {}
         }
-        renderSidebar();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
 
-      function renderCheckpointQuestion(q) {
-        var h = '<div class="quiz-wrapper" style="border-left: 4px solid #3b82f6;">';
-        h += '  <div class="question-prompt">📝 ' + escapeHtml(q.prompt) + '</div>';
-        if (q.options) {
-          q.options.forEach(function(opt) {
-            h += '<div class="option-choice" id="chk_opt_' + opt.id + '" onclick="window.selectCheckpointOption(\\'' + q.id + '\\', \\'' + opt.id + '\\', ' + opt.isCorrect + ')">';
-            h += '  <input type="radio" name="chk_' + q.id + '"> ' + escapeHtml(opt.text);
-            h += '</div>';
+        // Attach isolated scroll listener ONLY to #pageScrollArea
+        var scrollEl = document.getElementById('pageScrollArea');
+        if (scrollEl) {
+          if (preserveScroll) {
+            scrollEl.scrollTop = prevScrollTop;
+          }
+          checkShortScrollFallback(scrollEl, page, runtime);
+          scrollEl.addEventListener('scroll', function() {
+            handleIsolatedScroll(scrollEl, page);
           });
         }
-        h += '  <div id="chk_fb_' + q.id + '"></div>';
-        h += '</div>';
-        return h;
+
+        renderSidebar();
+        updateScormProgress(false);
+      }
+
+      function checkShortScrollFallback(scrollEl, page, runtime) {
+        if (!page.navigationRule || page.navigationRule.type !== 'scrolling' || runtime.scrolledToBottom) return;
+        var box = document.getElementById('shortScrollFallback');
+        if (!box) return;
+        var isScrollable = scrollEl.scrollHeight > scrollEl.clientHeight + 12;
+        if (!isScrollable) {
+          box.innerHTML = '<div class="short-scroll-confirm-box"><span>Has llegado al final de esta lectura breve. Confirma para habilitar el avance.</span><button type="button" class="btn-success" onclick="window.confirmShortScroll()">Confirmar fin de lectura</button></div>';
+        }
+      }
+
+      function handleIsolatedScroll(scrollEl, page) {
+        if (!page.navigationRule || page.navigationRule.type !== 'scrolling') return;
+        var maxScroll = scrollEl.scrollHeight - scrollEl.clientHeight;
+        if (maxScroll <= 10) return;
+
+        var pct = Math.min(100, Math.round((scrollEl.scrollTop / maxScroll) * 100));
+        var threshold = page.navigationRule.scrollThresholdPercent || 95;
+        var reachedBottom = (pct >= threshold) || (scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 16);
+        var runtime = getPageRuntime(page.id);
+
+        if (pct > runtime.scrollPercent || (reachedBottom && !runtime.scrolledToBottom)) {
+          runtime.scrollPercent = Math.max(runtime.scrollPercent, reachedBottom ? 100 : pct);
+          if (reachedBottom) {
+            runtime.scrolledToBottom = true;
+            runtime.completed = true;
+          }
+          var evalRes = evaluatePageCondition(page, runtime);
+          var badge = document.getElementById('conditionProgressBadge');
+          if (badge) badge.textContent = evalRes.progressText;
+
+          if (evalRes.met) {
+            var banner = document.getElementById('conditionBanner');
+            if (banner) {
+              banner.className = 'condition-banner unlocked';
+              banner.innerHTML = '<span>✓ ' + escapeHtml(evalRes.completedMessage) + '</span><span class="condition-progress-badge">100% leído</span>';
+            }
+            ['nextPageBtn', 'completeLessonBtn', 'nextLessonBtn', 'goExamBtn', 'finishCourseBtn'].forEach(function(btnId) {
+              var b = document.getElementById(btnId);
+              if (b) b.disabled = false;
+            });
+            updateScormProgress(true);
+            renderSidebar();
+          }
+        }
       }
 
       function renderAssessment(examId) {
-        currentLessonId = examId;
+        activeView = 'assessment';
+        activeAssessmentId = examId;
         var exam = (course.assessments || []).find(function(a) { return a.id === examId; });
         if (!exam) return;
 
@@ -1318,102 +2506,277 @@ body {
           return (exam.questionIds || []).indexOf(q.id) !== -1;
         });
 
-        var content = document.getElementById('contentContainer');
-        var html = '';
-
-        html += '<div class="lesson-header-area">';
-        html += '  <div class="lesson-breadcrumbs">Evaluación / Cuestionario</div>';
-        html += '  <h2 class="lesson-main-title">' + escapeHtml(exam.title) + '</h2>';
-        html += '  <p class="lesson-summary">' + escapeHtml(exam.description) + '</p>';
-        html += '  <div style="font-size:13px;color:#64748b;margin-top:8px;">Puntaje mínimo de aprobación: <strong>' + exam.passingScore + '%</strong> · Intentos permitidos: ' + (exam.maxAttempts === 0 ? 'Ilimitados' : exam.maxAttempts) + '</div>';
+        var viewport = document.getElementById('viewportContainer');
+        var html = '<div class="page-scroll-area"><div class="page-inner-container">';
+        html += '<div style="padding-bottom:16px;border-bottom:1px solid #e2e8f0;margin-bottom:20px;">';
+        html += '  <div class="lesson-breadcrumbs">Evaluación Calificada SCORM</div>';
+        html += '  <h2 class="page-main-title">' + escapeHtml(exam.title) + '</h2>';
+        html += '  <p style="font-size:14px;color:#475569;margin-top:6px;">' + escapeHtml(exam.description) + '</p>';
+        html += '  <div style="font-size:13px;color:#64748b;margin-top:8px;">Puntaje mínimo: <strong>' + exam.passingScore + '%</strong> · Intentos: ' + (exam.maxAttempts === 0 ? 'Ilimitados' : exam.maxAttempts) + '</div>';
         html += '</div>';
 
-        html += '<div class="quiz-wrapper">';
+        html += '<div class="quiz-wrapper" style="background:#fff;border-color:#e2e8f0;">';
         questions.forEach(function(q, qIdx) {
-          html += '<div class="question-item-card" id="q_card_' + q.id + '">';
-          html += '  <div class="question-prompt">' + (qIdx + 1) + '. ' + escapeHtml(q.prompt) + ' <span style="font-size:12px;color:#94a3b8;">(' + q.points + ' pts)</span></div>';
+          html += '<div class="question-item-card">';
+          html += '  <div class="question-prompt">' + (qIdx + 1) + '. ' + escapeHtml(q.prompt) + ' <span style="font-size:12px;color:#94a3b8;font-weight:400;">(' + q.points + ' pts)</span></div>';
 
           if (q.type === 'multiple_choice') {
             (q.options || []).forEach(function(opt) {
               var isSel = (quizAnswers[q.id] === opt.id);
               html += '<label class="option-choice' + (isSel ? ' selected' : '') + '">';
-              html += '  <input type="radio" name="q_' + q.id + '" value="' + opt.id + '" onchange="window.recordAnswer(\\'' + q.id + '\\', \\'' + opt.id + '\\')" ' + (isSel ? 'checked' : '') + '>';
-              html += '  <span>' + escapeHtml(opt.text) + '</span>';
+              html += '  <span style="display:flex;align-items:center;gap:10px;"><input type="radio" name="q_' + escapeAttr(q.id) + '" value="' + escapeAttr(opt.id) + '" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'' + escapeAttr(opt.id) + '\\')" ' + (isSel ? 'checked' : '') + '> ' + escapeHtml(opt.text) + '</span>';
               html += '</label>';
             });
           } else if (q.type === 'true_false') {
-            var isTrue = (quizAnswers[q.id] === 'true');
-            var isFalse = (quizAnswers[q.id] === 'false');
-            html += '<div style="display:flex;gap:12px;">';
-            html += '  <label class="option-choice' + (isTrue ? ' selected' : '') + '" style="flex:1;">';
-            html += '    <input type="radio" name="q_' + q.id + '" value="true" onchange="window.recordAnswer(\\'' + q.id + '\\', \\'true\\')" ' + (isTrue ? 'checked' : '') + '> Verdadero';
-            html += '  </label>';
-            html += '  <label class="option-choice' + (isFalse ? ' selected' : '') + '" style="flex:1;">';
-            html += '    <input type="radio" name="q_' + q.id + '" value="false" onchange="window.recordAnswer(\\'' + q.id + '\\', \\'false\\')" ' + (isFalse ? 'checked' : '') + '> Falso';
-            html += '  </label>';
+            var isT = (quizAnswers[q.id] === 'true');
+            var isF = (quizAnswers[q.id] === 'false');
+            html += '<div style="display:flex;gap:10px;">';
+            html += '  <label class="option-choice' + (isT ? ' selected' : '') + '" style="flex:1;justify-content:center;"><input type="radio" name="q_' + escapeAttr(q.id) + '" value="true" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'true\\')" ' + (isT ? 'checked' : '') + '> Verdadero</label>';
+            html += '  <label class="option-choice' + (isF ? ' selected' : '') + '" style="flex:1;justify-content:center;"><input type="radio" name="q_' + escapeAttr(q.id) + '" value="false" onchange="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', \\'false\\')" ' + (isF ? 'checked' : '') + '> Falso</label>';
             html += '</div>';
           } else if (q.type === 'fill_blank') {
             var curVal = quizAnswers[q.id] || '';
-            html += '<div>';
-            html += '  <input type="text" style="width:100%;max-width:360px;padding:10px 14px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;" placeholder="Escribe tu respuesta aquí..." value="' + escapeHtml(curVal) + '" oninput="window.recordAnswer(\\'' + q.id + '\\', this.value)">';
-            html += '</div>';
+            html += '<input type="text" style="width:100%;max-width:400px;padding:10px 14px;border:1px solid #cbd5e1;border-radius:7px;font-size:14px;" placeholder="Escribe tu respuesta..." value="' + escapeAttr(curVal) + '" oninput="window.recordAnswer(\\'' + escapeAttr(q.id) + '\\', this.value)">';
           }
           html += '</div>';
         });
 
-        html += '<div style="margin-top:24px;display:flex;align-items:center;gap:16px;">';
-        html += '  <button class="btn-primary" onclick="window.submitAssessment(\\'' + exam.id + '\\')">Calificar y Registrar en Moodle</button>';
-        html += '  <span id="examScoreResult" style="font-weight:700;font-size:15px;"></span>';
+        html += '<div style="margin-top:20px;display:flex;flex-wrap:wrap;align-items:center;gap:14px;">';
+        html += '  <button type="button" class="btn-primary" onclick="window.submitAssessment(\\'' + escapeAttr(exam.id) + '\\')">Calificar y Registrar en Moodle</button>';
+        html += '  <span id="examScoreResult" style="font-weight:700;font-size:14px;"></span>';
         html += '</div>';
-        html += '<div id="examFeedbackArea"></div>';
-        html += '</div>';
+        html += '</div></div></div>';
 
-        content.innerHTML = html;
+        viewport.innerHTML = html;
         renderSidebar();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
-      // Global window handlers
+      function renderCourseCompleted() {
+        activeView = 'completed';
+        var total = allLessons.length;
+        var completedCount = Object.keys(progressState.completedLessons).filter(function(k) { return progressState.completedLessons[k]; }).length;
+        var viewport = document.getElementById('viewportContainer');
+        viewport.innerHTML =
+          '<div class="page-scroll-area" style="display:flex;align-items:center;justify-content:center;text-align:center;">' +
+          '  <div style="max-width:480px;">' +
+          '    <div style="font-size:52px;margin-bottom:12px;">🎓</div>' +
+          '    <h2 style="font-size:24px;font-weight:800;margin-bottom:10px;">¡Has completado el recorrido del curso!</h2>' +
+          '    <p style="font-size:14px;color:#475569;margin-bottom:20px;">Completaste ' + completedCount + ' de ' + total + ' lecciones en <strong>' + escapeHtml(course.title) + '</strong>. Tu progreso ha sido guardado en la API SCORM.</p>' +
+          '    <button type="button" class="btn-secondary" onclick="window.loadLesson(\\'' + escapeAttr(firstLessonId) + '\\')">Volver al inicio del curso</button>' +
+          '  </div>' +
+          '</div>';
+        renderSidebar();
+      }
+
+      // Global handlers
       window.loadLesson = function(id) {
-        renderLesson(id);
+        var found = allLessons.find(function(it) { return it.lesson.id === id; });
+        if (!found) return;
+        navNotice = '';
+        progressState.currentLessonId = id;
+        progressState.currentPageId = found.lesson.pages[0] ? found.lesson.pages[0].id : '';
+        updateScormProgress(true);
+        renderActivePage(false);
       };
 
       window.loadAssessment = function(id) {
+        navNotice = '';
         renderAssessment(id);
       };
 
-      window.markLessonCompleted = function(id) {
-        completedLessons[id] = true;
-        updateScormProgress();
-        renderLesson(id);
+      window.jumpToPage = function(idx) {
+        var found = getCurrentLessonObj();
+        if (!found) return;
+        var pages = found.lesson.pages || [];
+        var curIdx = pages.findIndex(function(p) { return p.id === progressState.currentPageId; });
+        var perm = canJumpToPage(found.lesson, idx, curIdx);
+        if (!perm.allowed) {
+          navNotice = perm.reason || 'No puedes saltar a esta página todavía.';
+          renderActivePage(true);
+          return;
+        }
+        navNotice = '';
+        progressState.currentPageId = pages[idx].id;
+        updateScormProgress(true);
+        renderActivePage(false);
+      };
+
+      window.nextPage = function() {
+        var found = getCurrentLessonObj();
+        if (!found) return;
+        var pages = found.lesson.pages || [];
+        var curIdx = pages.findIndex(function(p) { return p.id === progressState.currentPageId; });
+        var page = pages[curIdx];
+        if (!page) return;
+        var rt = getPageRuntime(page.id);
+        var evalRes = evaluatePageCondition(page, rt);
+        if (!evalRes.met) {
+          navNotice = evalRes.instruction;
+          renderActivePage(true);
+          return;
+        }
+        rt.visited = true;
+        rt.completed = true;
+        if (curIdx < pages.length - 1) {
+          navNotice = '';
+          progressState.currentPageId = pages[curIdx + 1].id;
+          updateScormProgress(true);
+          renderActivePage(false);
+        }
+      };
+
+      window.prevPage = function() {
+        var found = getCurrentLessonObj();
+        if (!found) return;
+        var pages = found.lesson.pages || [];
+        var curIdx = pages.findIndex(function(p) { return p.id === progressState.currentPageId; });
+        var page = pages[curIdx];
+        var cfg = found.lesson.navigationConfig || { allowBack: true };
+        if (cfg.allowBack === false || (page && page.allowBackOverride === false)) {
+          navNotice = 'El docente restringió regresar desde esta sección.';
+          renderActivePage(true);
+          return;
+        }
+        if (curIdx > 0) {
+          navNotice = '';
+          progressState.currentPageId = pages[curIdx - 1].id;
+          updateScormProgress(true);
+          renderActivePage(false);
+        }
+      };
+
+      window.confirmShortScroll = function() {
+        var found = getCurrentLessonObj();
+        if (!found) return;
+        var page = found.lesson.pages.find(function(p) { return p.id === progressState.currentPageId; });
+        if (!page) return;
+        var rt = getPageRuntime(page.id);
+        rt.scrollPercent = 100;
+        rt.scrolledToBottom = true;
+        rt.completed = true;
+        updateScormProgress(true);
+        renderActivePage(true);
+      };
+
+      window.markLessonCompleted = function(lessonId) {
+        var found = allLessons.find(function(it) { return it.lesson.id === lessonId; });
+        if (!found) return;
+        var cfg = found.lesson.navigationConfig || {};
+        var pending = [];
+        (found.lesson.pages || []).forEach(function(p) {
+          var rt = getPageRuntime(p.id);
+          if (!evaluatePageCondition(p, rt).met) pending.push(p.title);
+        });
+        if (cfg.requireCompletionToAdvance && pending.length > 0) {
+          navNotice = 'No se puede completar la lección todavía. Faltan requisitos en: ' + pending.join(', ');
+          renderActivePage(true);
+          return;
+        }
+        var curPageRt = getPageRuntime(progressState.currentPageId);
+        curPageRt.completed = true;
+        progressState.completedLessons[lessonId] = true;
+        navNotice = '';
+        updateScormProgress(true);
+        renderActivePage(true);
+      };
+
+      window.advanceToNextLesson = function(nextLessonId) {
+        var found = getCurrentLessonObj();
+        if (found) {
+          var page = found.lesson.pages.find(function(p) { return p.id === progressState.currentPageId; });
+          if (page) {
+            var rt = getPageRuntime(page.id);
+            if (evaluatePageCondition(page, rt).met) rt.completed = true;
+          }
+          progressState.completedLessons[found.lesson.id] = true;
+        }
+        window.loadLesson(nextLessonId);
+      };
+
+      window.finishCourseView = function(lessonId) {
+        window.markLessonCompleted(lessonId);
+        renderCourseCompleted();
       };
 
       window.toggleAccordion = function(itemId) {
-        var el = document.getElementById('acc_' + itemId);
-        if (el) el.classList.toggle('open');
+        accordionOpen[itemId] = !accordionOpen[itemId];
+        var rt = getPageRuntime(progressState.currentPageId);
+        if (rt.interactedIds.indexOf(itemId) === -1) rt.interactedIds.push(itemId);
+        updateScormProgress(true);
+        renderActivePage(true);
       };
 
-      window.switchTab = function(blockId, activeIdx) {
-        var container = document.getElementById('tabs_' + blockId);
-        if (!container) return;
-        var btns = container.querySelectorAll('.tab-nav-btn');
-        var panels = container.querySelectorAll('.tab-panel');
-        btns.forEach(function(b, i) {
-          if (i === activeIdx) b.classList.add('active');
-          else b.classList.remove('active');
-        });
-        panels.forEach(function(p, i) {
-          p.style.display = (i === activeIdx ? 'block' : 'none');
-        });
+      window.switchTab = function(blockId, activeIdx, tabId) {
+        tabActive[blockId] = activeIdx;
+        var rt = getPageRuntime(progressState.currentPageId);
+        if (tabId && rt.interactedIds.indexOf(tabId) === -1) rt.interactedIds.push(tabId);
+        updateScormProgress(true);
+        renderActivePage(true);
       };
 
-      window.selectCheckpointOption = function(qId, optId, isCorrect) {
-        var fb = document.getElementById('chk_fb_' + qId);
-        if (isCorrect) {
-          fb.innerHTML = '<div class="feedback-box feedback-correct">¡Excelente respuesta correcta! Has asimilado bien este concepto.</div>';
-        } else {
-          fb.innerHTML = '<div class="feedback-box feedback-incorrect">Respuesta incorrecta. Revisa el contenido anterior e inténtalo nuevamente.</div>';
+      window.flipCard = function(cardId) {
+        flashcardFlipped[cardId] = !flashcardFlipped[cardId];
+        var rt = getPageRuntime(progressState.currentPageId);
+        if (rt.interactedIds.indexOf(cardId) === -1) rt.interactedIds.push(cardId);
+        updateScormProgress(true);
+        renderActivePage(true);
+      };
+
+      window.openResource = function(blockId) {
+        var rt = getPageRuntime(progressState.currentPageId);
+        if (rt.openedResourceIds.indexOf(blockId) === -1) rt.openedResourceIds.push(blockId);
+        updateScormProgress(true);
+        setTimeout(function() { renderActivePage(true); }, 120);
+      };
+
+      window.confirmResource = function(blockId) {
+        var rt = getPageRuntime(progressState.currentPageId);
+        if (rt.openedResourceIds.indexOf(blockId) === -1) return;
+        if (rt.confirmedResourceIds.indexOf(blockId) === -1) rt.confirmedResourceIds.push(blockId);
+        updateScormProgress(true);
+        renderActivePage(true);
+      };
+
+      window.answerPageQuestion = function(qId, ansVal) {
+        var found = getCurrentLessonObj();
+        if (!found) return;
+        var page = found.lesson.pages.find(function(p) { return p.id === progressState.currentPageId; });
+        if (!page) return;
+        var q = (course.questionBank || []).find(function(item) { return item.id === qId; });
+        if (!q) return;
+
+        var rt = getPageRuntime(page.id);
+        var rule = page.navigationRule || {};
+        var attempts = rt.questionAttempts[qId] || 0;
+        var maxAttempts = (rule.type === 'question') ? (rule.maxAttempts || 0) : 0;
+        if ((maxAttempts > 0 && attempts >= maxAttempts) || (rule.type === 'question' && rule.allowRetry === false && attempts >= 1)) {
+          navNotice = 'Has alcanzado el límite de intentos para esta pregunta.';
+          renderActivePage(true);
+          return;
         }
+
+        var isCorrect = false;
+        if (q.type === 'multiple_choice') {
+          var opt = (q.options || []).find(function(o) { return o.id === ansVal; });
+          isCorrect = !!(opt && opt.isCorrect);
+        } else if (q.type === 'true_false') {
+          isCorrect = (ansVal === (q.trueFalseAnswer ? 'true' : 'false'));
+        } else if (q.type === 'fill_blank') {
+          isCorrect = String(ansVal || '').trim().toLowerCase() === String(q.blankAnswer || '').trim().toLowerCase();
+        }
+
+        rt.questionAnswers[qId] = ansVal;
+        rt.questionCorrect[qId] = isCorrect;
+        rt.questionAttempts[qId] = attempts + 1;
+        navNotice = '';
+
+        updateScormProgress(true);
+        renderActivePage(true);
+      };
+
+      window.submitBlankQuestion = function(qId) {
+        var el = document.getElementById('blank_inp_' + qId);
+        if (el) window.answerPageQuestion(qId, el.value);
       };
 
       window.recordAnswer = function(qId, answerVal) {
@@ -1429,7 +2792,6 @@ body {
 
         var totalPoints = 0;
         var earnedPoints = 0;
-
         questions.forEach(function(q) {
           totalPoints += (q.points || 10);
           var userAns = quizAnswers[q.id];
@@ -1447,28 +2809,50 @@ body {
         });
 
         var percentScore = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 100;
-        quizScore = percentScore;
         var passed = (percentScore >= (exam.passingScore || 70));
+        progressState.completedAssessments[exam.id] = { score: percentScore, passed: passed };
 
         var resEl = document.getElementById('examScoreResult');
         if (passed) {
           resEl.innerHTML = '<span style="color:#16a34a;">¡Aprobado con ' + percentScore + '%! (' + earnedPoints + '/' + totalPoints + ' pts)</span>';
-          window.ScormBridge.setValue('cmi.core.score.raw', percentScore);
-          window.ScormBridge.setValue('cmi.score.raw', percentScore);
-          window.ScormBridge.setValue('cmi.score.scaled', (percentScore / 100).toFixed(2));
-          window.ScormBridge.setValue('cmi.core.lesson_status', 'passed');
-          window.ScormBridge.setValue('cmi.completion_status', 'completed');
-          window.ScormBridge.setValue('cmi.success_status', 'passed');
+          if (isScorm2004) {
+            window.ScormBridge.setValue('cmi.score.raw', percentScore);
+            window.ScormBridge.setValue('cmi.score.scaled', (percentScore / 100).toFixed(2));
+            window.ScormBridge.setValue('cmi.completion_status', 'completed');
+            window.ScormBridge.setValue('cmi.success_status', 'passed');
+          } else {
+            window.ScormBridge.setValue('cmi.core.score.raw', percentScore);
+            window.ScormBridge.setValue('cmi.core.score.min', '0');
+            window.ScormBridge.setValue('cmi.core.score.max', '100');
+            window.ScormBridge.setValue('cmi.core.lesson_status', 'passed');
+          }
         } else {
           resEl.innerHTML = '<span style="color:#dc2626;">Reprobado con ' + percentScore + '% (requerido ' + exam.passingScore + '%)</span>';
-          window.ScormBridge.setValue('cmi.core.score.raw', percentScore);
-          window.ScormBridge.setValue('cmi.core.lesson_status', 'failed');
-          window.ScormBridge.setValue('cmi.success_status', 'failed');
+          if (isScorm2004) {
+            window.ScormBridge.setValue('cmi.score.raw', percentScore);
+            window.ScormBridge.setValue('cmi.success_status', 'failed');
+          } else {
+            window.ScormBridge.setValue('cmi.core.score.raw', percentScore);
+            window.ScormBridge.setValue('cmi.core.lesson_status', 'failed');
+          }
         }
 
-        window.ScormBridge.commit();
+        updateScormProgress(true);
         renderSidebar();
       };
+
+      var toggleBtnEl = document.getElementById('toggleSidebarBtn');
+      if (toggleBtnEl) {
+        toggleBtnEl.addEventListener('click', function() {
+          window.toggleSidebar();
+        });
+      }
+      var backdropEl = document.getElementById('sidebarBackdrop');
+      if (backdropEl) {
+        backdropEl.addEventListener('click', function() {
+          window.toggleSidebar(false);
+        });
+      }
 
       function escapeHtml(str) {
         if (!str) return '';
@@ -1480,18 +2864,23 @@ body {
           .replace(/'/g, '&#039;');
       }
 
-      // Initial render
-      renderSidebar();
-      if (currentLessonId) {
-        renderLesson(currentLessonId);
+      function escapeAttr(str) {
+        return escapeHtml(str).replace(/\\\\/g, '\\\\\\\\');
       }
-      updateScormProgress();
 
-      // Window unload handler for SCORM finish
+      // Initial render
+      applySidebarState(false);
+      if (progressState.currentLessonId) {
+        renderActivePage(false);
+      } else {
+        renderSidebar();
+      }
+      updateScormProgress(false);
+
       window.addEventListener('beforeunload', function() {
+        updateScormProgress(true);
         window.ScormBridge.finish();
       });
-
     })();
   </script>
 </body>
@@ -1541,7 +2930,8 @@ Soporte y compatibilidad:
   /**
    * Builds the entire zip package blob ready for client download.
    */
-  static async createScormZipBlob(project: CourseProject): Promise<Blob> {
+  static async createScormZipBlob(rawProject: CourseProject): Promise<Blob> {
+    const project = NavigationService.migrateAndNormalizeProject(rawProject);
     const zip = new JSZip();
 
     // 1. imsmanifest.xml

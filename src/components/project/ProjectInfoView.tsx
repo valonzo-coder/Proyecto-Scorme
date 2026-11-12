@@ -46,13 +46,19 @@ export const ProjectInfoView: React.FC<ProjectInfoViewProps> = ({
   onNavigateSection
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [coverError, setCoverError] = React.useState<string | null>(null);
 
   const totalLessons = project.units.reduce((acc, u) => acc + u.lessons.length, 0);
+  const totalPages = project.units.reduce(
+    (acc, u) => acc + u.lessons.reduce((lAcc, l) => lAcc + (l.pages?.length || 0), 0),
+    0
+  );
   const totalQuestions = project.questionBank.length;
 
   const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setCoverError(null);
 
     try {
       const meta = await MediaService.addMediaFile(file);
@@ -61,7 +67,7 @@ export const ProjectInfoView: React.FC<ProjectInfoViewProps> = ({
         coverImage: meta.relativePath
       });
     } catch (err) {
-      alert('Error al procesar la imagen de portada.');
+      setCoverError('Error al procesar la imagen de portada.');
     }
     e.target.value = '';
   };
@@ -352,6 +358,9 @@ export const ProjectInfoView: React.FC<ProjectInfoViewProps> = ({
                   <p className="text-[11px] text-slate-400 mt-1">
                     La imagen se guardará dentro de la carpeta media/ del archivo .zip descargable con ruta relativa.
                   </p>
+                  {coverError && (
+                    <p className="text-[11px] text-rose-600 font-semibold mt-1">{coverError}</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -382,9 +391,9 @@ export const ProjectInfoView: React.FC<ProjectInfoViewProps> = ({
                 onClick={() => onNavigateSection('builder')}
                 className="p-3 rounded-lg bg-slate-50 hover:bg-blue-50/50 border border-slate-200/80 cursor-pointer transition-colors"
               >
-                <span className="text-slate-400 block text-[11px] mb-0.5">Lecciones</span>
+                <span className="text-slate-400 block text-[11px] mb-0.5">Lecciones / Páginas</span>
                 <span className="font-extrabold text-slate-900 text-lg tabular-nums">
-                  {totalLessons}
+                  {totalLessons} <span className="text-xs font-semibold text-slate-400">/ {totalPages} pág</span>
                 </span>
                 <span className="text-[10px] text-blue-600 block mt-1 font-semibold">Editar →</span>
               </div>
