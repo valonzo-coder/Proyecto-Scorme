@@ -167,7 +167,12 @@ export const MoodleXmlImportModal: React.FC<MoodleXmlImportModalProps> = ({
 
     try {
       const text = await file.text();
-      const parsed = MoodleXmlService.parseMoodleXml(text, file.name, file.size, project);
+      const parsed = MoodleXmlService.parseMoodleXml(
+        text,
+        file.name,
+        file.size,
+        project.questionBank || []
+      );
       setParseResult(parsed);
 
       // Pre-select all questions without fatal structural errors

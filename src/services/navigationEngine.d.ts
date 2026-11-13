@@ -34,6 +34,7 @@ export interface NavigationEngineInstance {
   getPageInteractiveTargets(page: CoursePage): EngineInteractiveTarget[];
   getPageResourceBlocks(page: CoursePage): ResourceBlock[];
   getPageCheckpointQuestionIds(page: CoursePage): string[];
+  isQuestionAutoGradable(q: QuestionItem | null | undefined): boolean;
   isQuestionValid(q: QuestionItem | null | undefined): boolean;
   hasValidAnswer(q: QuestionItem | null | undefined, answer: any): boolean;
   evaluateQuestionAnswer(q: QuestionItem | null | undefined, answer: any): boolean;

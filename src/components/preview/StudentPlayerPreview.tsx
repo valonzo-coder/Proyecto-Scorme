@@ -856,37 +856,20 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
           </div>
         )}
 
-        {q.type === 'fill_blank' && (
+        {(q.type === 'fill_blank' || q.type === 'numerical') && (
           <div className="flex gap-2">
             <input
               type="text"
+              inputMode={q.type === 'numerical' ? 'decimal' : 'text'}
               value={currentBlankDraft}
               disabled={lockedByAttempts}
               onChange={(e) => setDraftBlank(prev => ({ ...prev, [q.id]: e.target.value }))}
-              placeholder="Escribe tu respuesta y presiona Comprobar..."
-              className="flex-1 text-xs p-2 border border-slate-300 rounded-lg bg-white disabled:opacity-60"
-            />
-            <button
-              type="button"
-              disabled={lockedByAttempts || !currentBlankDraft.trim()}
-              onClick={() => handleAnswerPageQuestion(q, currentBlankDraft)}
-              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg cursor-pointer disabled:cursor-not-allowed"
-            >
-              Comprobar
-            </button>
-          </div>
-        )}
-
-        {q.type === 'numerical' && (
-          <div className="flex gap-2">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={currentBlankDraft}
-              disabled={lockedByAttempts}
-              onChange={(e) => setDraftBlank(prev => ({ ...prev, [q.id]: e.target.value }))}
-              placeholder="Ingresa un valor numérico (ej. 9.81)..."
-              className="flex-1 text-xs p-2 border border-slate-300 rounded-lg bg-white font-mono disabled:opacity-60"
+              placeholder={
+                q.type === 'numerical'
+                  ? 'Ingresa tu respuesta numérica (ej. 3.14) y presiona Comprobar...'
+                  : 'Escribe tu respuesta y presiona Comprobar...'
+              }
+              className="flex-1 text-xs p-2 border border-slate-300 rounded-lg bg-white disabled:opacity-60 font-mono"
             />
             <button
               type="button"
@@ -2159,30 +2142,21 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                                 </div>
                               )}
 
-                              {q.type === 'fill_blank' && (
+                              {(q.type === 'fill_blank' || q.type === 'numerical') && (
                                 <input
                                   type="text"
+                                  inputMode={q.type === 'numerical' ? 'decimal' : 'text'}
                                   disabled={attemptsExhausted}
                                   value={quizAnswers[q.id] || ''}
                                   onChange={(e) =>
                                     setQuizAnswers(prev => ({ ...prev, [q.id]: e.target.value }))
                                   }
-                                  placeholder="Escribe tu respuesta..."
-                                  className="w-full text-xs p-2 border border-slate-300 rounded-lg bg-slate-50 disabled:opacity-60"
-                                />
-                              )}
-
-                              {q.type === 'numerical' && (
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  disabled={attemptsExhausted}
-                                  value={quizAnswers[q.id] || ''}
-                                  onChange={(e) =>
-                                    setQuizAnswers(prev => ({ ...prev, [q.id]: e.target.value }))
+                                  placeholder={
+                                    q.type === 'numerical'
+                                      ? 'Ingresa tu respuesta numérica (ej. 3.14)...'
+                                      : 'Escribe tu respuesta...'
                                   }
-                                  placeholder="Ingresa un número (ej. 3.14)..."
-                                  className="w-full max-w-xs text-xs p-2 border border-slate-300 rounded-lg bg-slate-50 font-mono disabled:opacity-60"
+                                  className="w-full text-xs p-2 border border-slate-300 rounded-lg bg-slate-50 disabled:opacity-60 font-mono"
                                 />
                               )}
 

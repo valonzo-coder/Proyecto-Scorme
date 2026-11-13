@@ -1953,7 +1953,7 @@ body {
         }
 
         if (!Engine.isQuestionAutoGradable(q)) {
-          h += '<div class="feedback-box feedback-incorrect">Esta pregunta (' + escapeHtml(q.type) + ') no admite autocorrección automática en SCORM.</div>';
+          h += '<div class="feedback-box feedback-incorrect" style="margin-top:0;margin-bottom:8px;">Esta pregunta (' + escapeHtml(q.type) + ') no admite calificación automática en SCORM.</div>';
         }
 
         if (q.type === 'multiple_choice') {
