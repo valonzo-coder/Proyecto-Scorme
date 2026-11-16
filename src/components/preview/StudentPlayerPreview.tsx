@@ -2088,7 +2088,9 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                               <div className="font-bold text-xs text-slate-900 flex items-start gap-2">
                                 <span className="text-slate-500 font-mono shrink-0">{idx + 1}.</span>
                                 <div className="flex-1 min-w-0">
-                                  <SafeRichContent html={q.promptHtml} fallbackText={q.prompt} />
+                                  {q.type === 'cloze' && q.clozeData?.rawText
+                                    ? <span>Completa las respuestas incrustadas en el enunciado.</span>
+                                    : <SafeRichContent html={q.promptHtml} fallbackText={q.prompt} />}
                                 </div>
                                 <span className="font-mono text-slate-400 font-normal shrink-0">
                                   ({q.points} pts)
