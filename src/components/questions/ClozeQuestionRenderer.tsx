@@ -12,7 +12,11 @@ interface ClozeQuestionRendererProps {
   idPrefix?: string;
 }
 
-function plainOptionLabel(value: string): string {\n  return value.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction ClozeControl({ question, value, onChange, disabled, seed }: {
+function plainOptionLabel(value: string): string {
+  return value.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();
+}
+
+function ClozeControl({ question, value, onChange, disabled, seed }: {
   question: ClozeSubquestion;
   value: string | string[] | undefined;
   onChange: (value: string | string[]) => void;
