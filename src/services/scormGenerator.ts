@@ -2535,13 +2535,17 @@ body {
           var opts = q.options ? (exam.shuffleOptions ? seededSort(q.options, 'opt_' + exam.id + '_' + q.id, function(o) { return o.id; }) : q.options) : [];
           var rightOpts = q.matchingPairs ? seededSort(q.matchingPairs.map(function(p) { return p.right; }), 'match_' + exam.id + '_' + q.id, function(r) { return r; }) : [];
           html += '<div class="question-item-card">';
-          if (q.promptHtml) {
+          if (q.type === 'cloze' && q.clozeData && q.clozeData.rawText) {
+            html += '  <div class="question-prompt"><span style="margin-right:6px;">' + (qIdx + 1) + '.</span> ' + renderClozeQuestion(q, quizAnswers[q.id] || {}, attemptsExhausted || assessmentSubmitted) + ' <span style="font-size:12px;color:#94a3b8;font-weight:400;">(' + q.points + ' pts)</span></div>';
+          } else if (q.promptHtml) {
             html += '  <div class="question-prompt block-text"><span style="margin-right:6px;">' + (qIdx + 1) + '.</span>' + q.promptHtml + ' <span style="font-size:12px;color:#94a3b8;font-weight:400;">(' + q.points + ' pts)</span></div>';
           } else {
             html += '  <div class="question-prompt">' + (qIdx + 1) + '. ' + escapeHtml(q.prompt) + ' <span style="font-size:12px;color:#94a3b8;font-weight:400;">(' + q.points + ' pts)</span></div>';
           }
 
-          if (q.type === 'multiple_choice') {
+          if (q.type === 'cloze') {
+            // Los controles se generan junto con el enunciado incrustado.
+          } else if (q.type === 'multiple_choice') {
             opts.forEach(function(opt) {
               var isSel = (quizAnswers[q.id] === opt.id);
               html += '<label class="option-choice' + (isSel ? ' selected' : '') + '">';
@@ -2586,9 +2590,15 @@ body {
           }
 
           if (assessmentSubmitted && exam.showFeedback !== false) {
-            var qOk = Engine.evaluateQuestionAnswer(q, quizAnswers[q.id]);
+            var qOk = q.type === 'cloze'
+              ? scoreClozeQuestion(q, quizAnswers[q.id] || {}).allCorrect
+              : Engine.evaluateQuestionAnswer(q, quizAnswers[q.id]);
             html += '<div class="feedback-box ' + (qOk ? 'feedback-correct' : 'feedback-incorrect') + '">';
-            html += '  <strong>' + (qOk ? '✓ Respuesta correcta' : '✕ Respuesta incorrecta') + '</strong>';
+            html += '  <strong>' + (qOk ? '✓ Respuesta correcta' : '✕ Respuesta incorrecta o parcial') + '</strong>';
+            if (q.type === 'cloze') {
+              var clozeScore = scoreClozeQuestion(q, quizAnswers[q.id] || {});
+              html += '<div>Calificación de esta pregunta: ' + Math.round(clozeScore.fraction * 100) + '%</div>';
+            }
             if (q.explanationHtml) html += '<div class="block-text" style="margin-top:4px;">' + q.explanationHtml + '</div>';
             else if (q.explanation) html += '<div style="margin-top:4px;">' + escapeHtml(q.explanation) + '</div>';
             html += '</div>';
@@ -2915,7 +2925,9 @@ body {
         questions.forEach(function(q) {
           var pts = q.points || 10;
           totalPoints += pts;
-          if (Engine.evaluateQuestionAnswer(q, quizAnswers[q.id])) {
+          if (q.type === 'cloze') {
+            earnedPoints += scoreClozeQuestion(q, quizAnswers[q.id] || {}).earnedPoints;
+          } else if (Engine.evaluateQuestionAnswer(q, quizAnswers[q.id])) {
             earnedPoints += pts;
           }
         });
