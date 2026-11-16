@@ -113,7 +113,10 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
       <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
         <label className={labelClass}>Enunciado y contenido de la pregunta (admite HTML, imágenes, tablas y fórmulas)</label>
         <textarea
+          ref={sourceRef}
           rows={5}
+          onSelect={event => setCursorPosition(event.currentTarget.selectionStart)}
+          onClick={event => setCursorPosition(event.currentTarget.selectionStart)}
           className={inputClass + ' font-mono leading-relaxed'}
           value={value}
           onChange={event => onChange(event.target.value)}
