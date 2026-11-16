@@ -2481,7 +2481,6 @@ body {
               html += '</span>';
             }
           }
-          html += '<span>' + escapeHtml(source.slice(start, end)) + '</span>';
           cursor = end;
         });
         html += '<span>' + escapeHtml(source.slice(cursor)) + '</span>';
