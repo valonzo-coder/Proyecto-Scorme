@@ -24,7 +24,7 @@ function parseNumeric(value: string): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-function answerFraction(sub: ClozeSubquestion, answer: ClozeAnswer, response: ClozeResponse): number {
+function answerFraction(sub: ClozeSubquestion, _answer: ClozeAnswer | undefined, response: ClozeResponse): number {
   const type = sub.canonicalType;
   const responses = Array.isArray(response) ? response : [response];
   if (type === 'SHORTANSWER' || type === 'SHORTANSWER_C') {
@@ -70,12 +70,14 @@ function answerFraction(sub: ClozeSubquestion, answer: ClozeAnswer, response: Cl
 
 export function evaluateCloze(source: string, responses: ClozeResponseMap, points = 1): ClozeEvaluation {
   const parsed = parseCloze(source);
-  const supported = parsed.subquestions.filter(item => item.supported && item.canonicalType);
-  const maximumWeight = supported.reduce((sum, item) => sum + item.weight, 0);
-  const details = supported.map(sub => {
+  const allSubquestions = parsed.subquestions;
+  const maximumWeight = allSubquestions.reduce((sum, item) => sum + item.weight, 0);
+  const details = allSubquestions.map(sub => {
     const response = responses[sub.id];
     const answered = Array.isArray(response) ? response.length > 0 : String(response ?? '').trim().length > 0;
-    const fraction = answered ? answerFraction(sub, sub.answers[0] ? sub : sub, response as ClozeResponse) : 0;
+    const fraction = answered && sub.supported && sub.canonicalType
+      ? answerFraction(sub, sub.answers[0], response as ClozeResponse)
+      : 0;
     const earned = fraction * sub.weight;
     const matchingAnswer = sub.answers.find(a => a.text === String(response ?? ''));
     return {
@@ -88,11 +90,11 @@ export function evaluateCloze(source: string, responses: ClozeResponseMap, point
   });
   const earnedWeight = details.reduce((sum, item) => sum + item.earned, 0);
   const fraction = maximumWeight > 0 ? Math.max(0, Math.min(1, earnedWeight / maximumWeight)) : 0;
-  const allAnswered = supported.every(sub => {
+  const allAnswered = allSubquestions.every(sub => {
     const response = responses[sub.id];
     return Array.isArray(response) ? response.length > 0 : String(response ?? '').trim().length > 0;
   });
-  const allCorrect = supported.length > 0 && details.every(item => item.fraction >= 1);
+  const allCorrect = allSubquestions.length > 0 && allSubquestions.every(sub => sub.supported) && details.every(item => item.fraction >= 1);
   return {
     earnedPoints: fraction * Math.max(0, points),
     maximumPoints: Math.max(0, points),
