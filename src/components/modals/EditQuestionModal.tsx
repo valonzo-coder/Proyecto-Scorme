@@ -163,10 +163,22 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
     const effectivePrompt = type === 'cloze' || useRichPrompt
       ? htmlToPlainText(effectivePromptHtml) || name.trim()
       : prompt.trim();
+    const parsedCloze = type === 'cloze' ? parseCloze(effectivePromptHtml || clozeSource) : null;
 
     if (!effectivePrompt) {
       setValidationError('Por favor redacta el enunciado de la pregunta.');
       return;
+    }
+
+    if (type === 'cloze' && parsedCloze) {
+      if (parsedCloze.subquestions.length === 0) {
+        setValidationError('Agrega al menos un espacio de respuesta Cloze antes de guardar.');
+        return;
+      }
+      if (parsedCloze.errors.length > 0) {
+        setValidationError(parsedCloze.errors.join(' '));
+        return;
+      }
     }
 
     if (type === 'multiple_choice' || type === 'multiple_response') {
@@ -234,7 +246,6 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
           ]
         : undefined;
 
-    const parsedCloze = type === 'cloze' ? parseCloze(effectivePromptHtml || clozeSource) : null;
     const clozeData = type === 'cloze' && parsedCloze ? {
       rawText: effectivePromptHtml || clozeSource,
       subquestions: parsedCloze.subquestions.map(sub => ({
@@ -389,9 +400,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
                 {(type === 'description' || question?.type === 'description') && (
                   <option value="description">Descripción (Informativa)</option>
                 )}
-                {(type === 'cloze' || question?.type === 'cloze') && (
-                  <option value="cloze">Cloze (Respuestas incrustadas)</option>
-                )}
+                <option value="cloze">Cloze (Respuestas incrustadas)</option>
                 {(type === 'unsupported' || question?.type === 'unsupported') && (
                   <option value="unsupported">No compatible ({question?.rawMoodleType || 'Moodle'})</option>
                 )}
