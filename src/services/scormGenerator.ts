@@ -1959,8 +1959,8 @@ body {
         if (q.type === 'cloze' && q.clozeData && q.clozeData.rawText) {
           var clozeDraft = checkpointDraftMatch[q.id] || userAnswer || {};
           checkpointDraftMatch[q.id] = clozeDraft;
-          h += renderClozeQuestion(q, clozeDraft, locked || isChecked, true);
-          h += '<button type="button" class="btn-primary" style="margin-top:8px;" ' + (locked || isChecked ? 'disabled' : '') + ' onclick="window.submitClozeCheckpoint(\\'' + escapeAttr(q.id) + '\\')">Comprobar respuestas</button>';
+          h += renderClozeQuestion(q, clozeDraft, locked, true);
+          h += '<button type="button" class="btn-primary" style="margin-top:8px;" ' + (locked ? 'disabled' : '') + ' onclick="window.submitClozeCheckpoint(\\'' + escapeAttr(q.id) + '\\')">Comprobar respuestas</button>';
         } else if (q.type === 'multiple_choice') {
           (q.options || []).forEach(function(opt) {
             var isChosen = (userAnswer === opt.id);
