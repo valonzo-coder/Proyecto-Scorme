@@ -64,7 +64,7 @@ export interface ClozeSubquestionInfo {
   supported?: boolean;
   extension?: boolean;
   errors?: string[];
-  answers?: Array<{ raw: string; text: string; fraction: number | null; feedback: string; correctMarker: boolean }>;
+  answers?: Array<{ raw: string; text: string; fraction: number | null; feedback: string; correctMarker: boolean; tolerance?: number | null }>;
 }
 
 export interface QuestionItem {
