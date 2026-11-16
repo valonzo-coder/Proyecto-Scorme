@@ -1956,7 +1956,12 @@ body {
           h += '<div class="feedback-box feedback-incorrect" style="margin-top:0;margin-bottom:8px;">Esta pregunta (' + escapeHtml(q.type) + ') no admite calificación automática en SCORM.</div>';
         }
 
-        if (q.type === 'multiple_choice') {
+        if (q.type === 'cloze' && q.clozeData && q.clozeData.rawText) {
+          var clozeDraft = checkpointDraftMatch[q.id] || userAnswer || {};
+          checkpointDraftMatch[q.id] = clozeDraft;
+          h += renderClozeQuestion(q, clozeDraft, locked || isChecked, true);
+          h += '<button type="button" class="btn-primary" style="margin-top:8px;" ' + (locked || isChecked ? 'disabled' : '') + ' onclick="window.submitClozeCheckpoint(\\'' + escapeAttr(q.id) + '\\')">Comprobar respuestas</button>';
+        } else if (q.type === 'multiple_choice') {
           (q.options || []).forEach(function(opt) {
             var isChosen = (userAnswer === opt.id);
             var cls = 'option-choice';
@@ -2448,7 +2453,7 @@ body {
           .replace(/(href|src)\\s*=\\s*(["'])\\s*javascript:[^"']*\\2/gi, '$1="#"');
       }
 
-      function renderClozeQuestion(q, responseMap, disabled) {
+      function renderClozeQuestion(q, responseMap, disabled, checkpoint) {
         var source = q.clozeData && q.clozeData.rawText ? String(q.clozeData.rawText) : '';
         var subs = q.clozeData && Array.isArray(q.clozeData.subquestions) ? q.clozeData.subquestions : [];
         var html = '';
@@ -2464,13 +2469,13 @@ body {
           var selected = Array.isArray(current) ? current.map(String) : [String(current || '')];
           var answers = sub.answers || [];
           if (type === 'SHORTANSWER' || type === 'SA' || type === 'MW' || type === 'SHORTANSWER_C' || type === 'SAC' || type === 'MWC' || type === 'NUMERICAL' || type === 'NM') {
-            html += '<input class="cloze-inline-input" type="text" inputmode="' + ((type === 'NUMERICAL' || type === 'NM') ? 'decimal' : 'text') + '" value="' + escapeAttr(selected[0]) + '" ' + (disabled ? 'disabled' : '') + ' oninput="window.recordClozeAnswer(\\'' + escapeAttr(q.id) + '\\',\\'' + subId + '\\',this.value)" style="display:inline-block;min-width:90px;max-width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;margin:2px;">';
+            html += '<input class="cloze-inline-input" type="text" inputmode="' + ((type === 'NUMERICAL' || type === 'NM') ? 'decimal' : 'text') + '" value="' + escapeAttr(selected[0]) + '" ' + (disabled ? 'disabled' : '') + ' oninput="window.' + (checkpoint ? 'recordClozeCheckpointAnswer' : 'recordClozeAnswer') + '(\\'' + escapeAttr(q.id) + '\\',\\'' + subId + '\\',this.value)" style="display:inline-block;min-width:90px;max-width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;margin:2px;">';
           } else {
             var multi = String(type).indexOf('MULTIRESPONSE') === 0 || type === 'MR' || type === 'MRH';
             var shuffled = String(type).endsWith('S');
             var ordered = shuffled ? answers.slice().sort(function(a,b) { return String(a.text).localeCompare(String(b.text)); }) : answers;
             if (type === 'MULTICHOICE' || type === 'MC' || type === 'MULTICHOICE_S' || type === 'MCS') {
-              html += '<select ' + (disabled ? 'disabled' : '') + ' onchange="window.recordClozeAnswer(\\'' + escapeAttr(q.id) + '\\',\\'' + subId + '\\',this.value)" style="display:inline-block;max-width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;margin:2px;"><option value="">Selecciona...</option>';
+              html += '<select ' + (disabled ? 'disabled' : '') + ' onchange="window.' + (checkpoint ? 'recordClozeCheckpointAnswer' : 'recordClozeAnswer') + '(\\'' + escapeAttr(q.id) + '\\',\\'' + subId + '\\',this.value)" style="display:inline-block;max-width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;margin:2px;"><option value="">Selecciona...</option>';
               ordered.forEach(function(answer) {
                 html += '<option value="' + escapeAttr(answer.text) + '" ' + (selected[0] === answer.text ? 'selected' : '') + '>' + escapeHtml(answer.text) + '</option>';
               });
@@ -2482,8 +2487,8 @@ body {
                 var checked = selected.indexOf(String(answer.text)) >= 0;
                 var inputType = multi ? 'checkbox' : 'radio';
                 var onChange = multi
-                  ? "window.toggleClozeAnswer('" + escapeAttr(q.id) + "','" + subId + "','" + escapeAttr(answer.text) + "',this.checked)"
-                  : "window.recordClozeAnswer('" + escapeAttr(q.id) + "','" + subId + "','" + escapeAttr(answer.text) + "')";
+                  ? "window." + (checkpoint ? "toggleClozeCheckpointAnswer" : "toggleClozeAnswer") + "('" + escapeAttr(q.id) + "','" + subId + "','" + escapeAttr(answer.text) + "',this.checked)"
+                  : "window." + (checkpoint ? "recordClozeCheckpointAnswer" : "recordClozeAnswer") + "('" + escapeAttr(q.id) + "','" + subId + "','" + escapeAttr(answer.text) + "')";
                 html += '<label style="display:inline-flex;align-items:center;gap:5px;font-size:13px;"><input type="' + inputType + '" name="cloze_' + escapeAttr(q.id) + '_' + subId + '" ' + (checked ? 'checked' : '') + ' ' + (disabled ? 'disabled' : '') + ' onchange="' + onChange + '"> ' + escapeHtml(answer.text) + '</label>';
               });
               html += '</span>';
@@ -2500,6 +2505,27 @@ body {
           quizAnswers[questionId] = {};
         }
         quizAnswers[questionId][subId] = value;
+      };
+
+      window.recordClozeCheckpointAnswer = function(questionId, subId, value) {
+        if (!checkpointDraftMatch[questionId] || typeof checkpointDraftMatch[questionId] !== 'object' || Array.isArray(checkpointDraftMatch[questionId])) {
+          checkpointDraftMatch[questionId] = {};
+        }
+        checkpointDraftMatch[questionId][subId] = value;
+      };
+
+      window.toggleClozeCheckpointAnswer = function(questionId, subId, value, checked) {
+        if (!checkpointDraftMatch[questionId] || typeof checkpointDraftMatch[questionId] !== 'object' || Array.isArray(checkpointDraftMatch[questionId])) {
+          checkpointDraftMatch[questionId] = {};
+        }
+        var current = Array.isArray(checkpointDraftMatch[questionId][subId]) ? checkpointDraftMatch[questionId][subId].slice() : [];
+        if (checked && current.indexOf(value) < 0) current.push(value);
+        if (!checked) current = current.filter(function(item) { return item !== value; });
+        checkpointDraftMatch[questionId][subId] = current;
+      };
+
+      window.submitClozeCheckpoint = function(questionId) {
+        window.answerPageQuestion(questionId, checkpointDraftMatch[questionId] || {});
       };
 
       window.toggleClozeAnswer = function(questionId, subId, value, checked) {
