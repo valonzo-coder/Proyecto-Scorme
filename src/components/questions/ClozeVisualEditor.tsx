@@ -13,7 +13,7 @@ const inputClass = 'w-full rounded-lg border border-slate-300 bg-white px-2.5 py
 const labelClass = 'mb-1 block text-[11px] font-semibold text-slate-600';
 
 function escapeAnswer(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/~/g, '\\~').replace(/#/g, '\\#').replace(/{/g, '\\{').replace(/}/g, '\\}');
+  return value.replace(/\\/g, '\\\\').replace(/~/g, '\\~').replace(/#/g, '\\#').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/=/g, '\\=').replace(/:/g, '\\:');
 }
 
 function serializeAnswer(answer: ClozeAnswer, index: number, type: ClozeCanonicalType): string {
@@ -26,7 +26,7 @@ function serializeAnswer(answer: ClozeAnswer, index: number, type: ClozeCanonica
   return (index > 0 ? '~' : '') + marker + text + (answer.feedback ? '#' + escapeAnswer(answer.feedback) : '');
 }
 
-function serializeSubquestion(sub: ClozeSubquestion, type: ClozeCanonicalType, weight: number, answers: ClozeAnswer[]): string {
+function serializeSubquestion(type: ClozeCanonicalType, weight: number, answers: ClozeAnswer[]): string {
   const body = answers.map((answer, index) => serializeAnswer(answer, index, type)).join('');
   return '{' + weight + ':' + type + ':' + body + '}';
 }
@@ -60,7 +60,7 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
     const type = patch.canonicalType || sub.canonicalType!;
     const answers = patch.answers || sub.answers;
     const weight = patch.weight ?? sub.weight;
-    onChange(replaceSubquestion(value, sub, serializeSubquestion(sub, type, weight, answers)));
+    onChange(replaceSubquestion(value, sub, serializeSubquestion(type, weight, answers)));
   };
 
   const addQuestion = () => {
@@ -70,7 +70,7 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
           { ...createAnswer(newType), text: 'Opción correcta', fraction: 100, correctMarker: true },
           { ...createAnswer(newType), text: 'Opción alternativa', fraction: 0, correctMarker: false }
         ];
-    const addition = serializeSubquestion({} as ClozeSubquestion, newType, Math.max(0.1, newWeight), defaults);
+    const addition = serializeSubquestion(newType, Math.max(0.1, newWeight), defaults);
     const position = cursorPosition ?? value.length;
     const before = value.slice(0, position);
     const after = value.slice(position);
