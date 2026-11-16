@@ -913,12 +913,23 @@ export const QuestionBankView: React.FC<QuestionBankViewProps> = ({
                       )}
 
                       {q.type === 'cloze' && q.clozeData && (
-                        <div className="p-3 bg-amber-50/70 rounded-lg border border-amber-200 text-xs text-amber-900 space-y-1">
+                        <div className="p-3 bg-amber-50/70 rounded-lg border border-amber-200 text-xs text-amber-900 space-y-2">
                           <div className="font-bold">
-                            Reactivo Cloze con {q.clozeData.subquestions.length} subpregunta(s) embebida(s):
+                            Pregunta Cloze: {q.clozeData.subquestions.length} subpregunta(s) detectada(s)
+                          </div>
+                          <div className="space-y-1">
+                            {q.clozeData.subquestions.map((sub, index) => (
+                              <div key={index} className="flex flex-wrap items-center gap-2 rounded bg-white/70 px-2 py-1">
+                                <span className="font-semibold">#{sub.index}</span>
+                                <span>{sub.canonicalType || sub.subType}</span>
+                                <span className="text-amber-800">Ponderación: {sub.weight}</span>
+                                {sub.supported === false && <span className="text-red-700">Extensión no compatible</span>}
+                                {sub.errors?.length ? <span className="text-red-700">{sub.errors.join('; ')}</span> : null}
+                              </div>
+                            ))}
                           </div>
                           <div className="text-[11px] text-amber-800">
-                            Se conserva para consulta. Edita y convierte a un formato autocorregible si deseas incluirla en evaluaciones SCORM.
+                            La importación ahora interpreta los tipos, alternativas, porcentajes, retroalimentación y tolerancias numéricas reconocibles. La edición visual y la evaluación interactiva de Cloze aún requieren implementación.
                           </div>
                         </div>
                       )}
