@@ -13,6 +13,8 @@ import {
 import { CategoryService, DEFAULT_CATEGORY_ID, isQuestionAutoGradable } from '../../services/categoryService';
 import { htmlToPlainText, sanitizeMoodleHtml } from '../../services/moodleXmlService';
 import { RichTextEditor } from '../editor/RichTextEditor';
+import { ClozeVisualEditor } from '../questions/ClozeVisualEditor';
+import { parseCloze } from '../../services/clozeParser';
 
 interface EditQuestionModalProps {
   question: QuestionItem | null;
@@ -56,6 +58,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
     question?.promptHtml || (question?.prompt ? `<p>${question.prompt}</p>` : '<p></p>')
   );
   const [useRichPrompt, setUseRichPrompt] = useState<boolean>(!!question?.promptHtml);
+  const [clozeSource, setClozeSource] = useState<string>(question?.clozeData?.rawText || question?.promptHtml || question?.prompt || '');
   const [explanation, setExplanation] = useState(question?.explanation || '');
   const [explanationHtml, setExplanationHtml] = useState(question?.explanationHtml || '');
   const [points, setPoints] = useState(question?.points ?? 10);
@@ -104,6 +107,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
       question?.promptHtml || (question?.prompt ? `<p>${question.prompt}</p>` : '<p></p>')
     );
     setUseRichPrompt(!!question?.promptHtml);
+    setClozeSource(question?.clozeData?.rawText || question?.promptHtml || question?.prompt || '');
     setExplanation(question?.explanation || '');
     setExplanationHtml(question?.explanationHtml || '');
     setPoints(question?.points ?? 10);
@@ -228,7 +232,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
           ]
         : undefined;
 
-    const autoGradable = isQuestionAutoGradable({ type });
+    const parsedCloze = type === 'cloze' ? parseCloze(effectivePromptHtml || clozeSource) : null;\n    const clozeData = type === 'cloze' && parsedCloze ? {\n      rawText: effectivePromptHtml || clozeSource,\n      subquestions: parsedCloze.subquestions.map(sub => ({\n        index: sub.index, weight: sub.weight, subType: sub.originalType, rawBody: sub.rawBody,\n        canonicalType: sub.canonicalType, alias: sub.alias, start: sub.start, end: sub.end,\n        supported: sub.supported, extension: sub.extension, errors: sub.errors, answers: sub.answers\n      }))\n    } : undefined;\n    const autoGradable = type === 'cloze'\n      ? !!parsedCloze && parsedCloze.subquestions.length > 0 && parsedCloze.subquestions.every(sub => sub.supported && !!sub.canonicalType && sub.errors.length === 0)\n      : isQuestionAutoGradable({ type } as QuestionItem);
 
     const updated: QuestionItem = {
       ...question,
@@ -237,7 +241,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
       name: name.trim() || undefined,
       type,
       prompt: effectivePrompt,
-      promptHtml: useRichPrompt ? effectivePromptHtml : undefined,
+      promptHtml: type === 'cloze' || useRichPrompt ? effectivePromptHtml : undefined,\n      clozeData,
       explanation: explanation.trim(),
       explanationHtml:
         explanationHtml && htmlToPlainText(explanationHtml) === explanation.trim()
@@ -371,7 +375,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
                   <option value="description">Descripción (Informativa)</option>
                 )}
                 {(type === 'cloze' || question?.type === 'cloze') && (
-                  <option value="cloze">Cloze (Pendiente de adaptación)</option>
+                  <option value="cloze">Cloze (Respuestas incrustadas)</option>
                 )}
                 {(type === 'unsupported' || question?.type === 'unsupported') && (
                   <option value="unsupported">No compatible ({question?.rawMoodleType || 'Moodle'})</option>
@@ -423,7 +427,15 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
               </button>
             </div>
 
-            {useRichPrompt ? (
+            {type === 'cloze' ? (
+              <ClozeVisualEditor
+                value={clozeSource}
+                onChange={(source) => {
+                  setClozeSource(source);
+                  if (validationError) setValidationError(null);
+                }}
+              />
+            ) : useRichPrompt ? (
               <RichTextEditor
                 content={promptHtml}
                 onChange={(html) => {
@@ -737,7 +749,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
                   : `Tipo Moodle no compatible (${question?.rawMoodleType || 'desconocido'})`}
               </div>
               <p className="text-[11px] text-slate-600 leading-relaxed">
-                Este tipo conserva su contenido en el banco para edición o consulta, pero no participa en evaluaciones autocorregibles ni exportación funcional SCORM. Puedes cambiar el tipo arriba si deseas adaptarlo manualmente a un formato interactivo compatible.
+                Cloze permite combinar respuestas cortas, numéricas, selección única y selección múltiple dentro de un mismo enunciado. Configura cada espacio en el editor visual; los tipos compatibles se califican automáticamente y se conservan en sintaxis Moodle.
               </p>
               {type === 'cloze' && question?.clozeData && question.clozeData.subquestions.length > 0 && (
                 <div className="space-y-1 pt-1">
