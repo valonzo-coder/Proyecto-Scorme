@@ -1491,7 +1491,12 @@ export class MoodleXmlService {
       };
 
       const targetCategoryId = resolveTargetCategoryId(draft);
-      const pendingAdaptation = !isQuestionAutoGradable({ type: draft.mappedType });
+      const clozeFullySupported = draft.mappedType === 'cloze' &&
+        !!draft.clozeData?.subquestions?.length &&
+        draft.clozeData.subquestions.every(sub => sub.supported === true && !!sub.canonicalType);
+      const pendingAdaptation = draft.mappedType === 'cloze'
+        ? !clozeFullySupported
+        : !isQuestionAutoGradable({ type: draft.mappedType } as QuestionItem);
 
       const newQ: QuestionItem = {
         id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
