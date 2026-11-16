@@ -16,6 +16,7 @@ export interface ClozeAnswer {
   fraction: number | null;
   feedback: string;
   correctMarker: boolean;
+  tolerance?: number | null;
 }
 
 export interface ClozeSubquestion {
@@ -101,14 +102,26 @@ function parseAnswers(type: ClozeCanonicalType | null, rawBody: string): ClozeAn
       rest = rest.slice(1);
     }
     const feedbackParts = splitUnescaped(rest, '#');
-    const answerText = feedbackParts.shift() || '';
+    let answerText = feedbackParts.shift() || '';
     const feedback = feedbackParts.join('#');
+    let tolerance: number | null | undefined;
+    if (type === 'NUMERICAL') {
+      const numericParts = splitUnescaped(answerText, ':');
+      if (numericParts.length > 1) {
+        answerText = numericParts.shift() || '';
+        const parsedTolerance = Number(unescapeCloze(numericParts.join(':')).trim());
+        tolerance = Number.isFinite(parsedTolerance) && parsedTolerance >= 0 ? parsedTolerance : null;
+      } else {
+        tolerance = 0;
+      }
+    }
     return {
       raw: token,
       text: unescapeCloze(answerText),
       fraction,
       feedback: unescapeCloze(feedback),
-      correctMarker
+      correctMarker,
+      ...(type === 'NUMERICAL' ? { tolerance } : {})
     };
   });
 }
