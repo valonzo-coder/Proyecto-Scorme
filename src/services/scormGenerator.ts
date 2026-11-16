@@ -2440,6 +2440,14 @@ body {
         };
       }
 
+      function safeClozeHtml(value) {
+        return String(value || '')
+          .replace(/<(script|iframe|object|embed|style|form|svg)\\b[^>]*>[\\s\\S]*?<\\/\\1>/gi, '')
+          .replace(/<(script|iframe|object|embed|style|form|input|meta|link)\\b[^>]*\\/?>/gi, '')
+          .replace(/\\son[a-z]+\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+)/gi, '')
+          .replace(/(href|src)\\s*=\\s*(["'])\\s*javascript:[^"']*\\2/gi, '$1="#"');
+      }
+
       function renderClozeQuestion(q, responseMap, disabled) {
         var source = q.clozeData && q.clozeData.rawText ? String(q.clozeData.rawText) : '';
         var subs = q.clozeData && Array.isArray(q.clozeData.subquestions) ? q.clozeData.subquestions : [];
@@ -2449,7 +2457,7 @@ body {
           var start = Number(sub.start);
           var end = Number(sub.end);
           if (!isFinite(start) || !isFinite(end) || start < cursor || end > source.length || end <= start) return;
-          html += '<span>' + escapeHtml(source.slice(cursor, start)) + '</span>';
+          html += safeClozeHtml(source.slice(cursor, start));
           var type = sub.canonicalType || sub.subType;
           var subId = 'cloze-' + (sub.index || idx + 1);
           var current = responseMap[subId];
@@ -2483,7 +2491,7 @@ body {
           }
           cursor = end;
         });
-        html += '<span>' + escapeHtml(source.slice(cursor)) + '</span>';
+        html += safeClozeHtml(source.slice(cursor));
         return '<div class="cloze-question-content" style="line-height:2.4;">' + html + '</div>';
       }
 
