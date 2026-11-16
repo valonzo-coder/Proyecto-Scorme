@@ -929,7 +929,7 @@ export const QuestionBankView: React.FC<QuestionBankViewProps> = ({
                             ))}
                           </div>
                           <div className="text-[11px] text-amber-800">
-                            La importación interpreta tipos, alternativas, porcentajes, retroalimentación y tolerancias. Las preguntas compatibles pueden utilizarse en evaluaciones y en los reproductores de vista previa y SCORM. El editor visual Cloze y la exportación Moodle XML de estas preguntas siguen pendientes.
+                            La importación, el editor visual y los reproductores permiten configurar y responder las variantes Cloze compatibles. La exportación Moodle XML de preguntas Cloze editadas aún está pendiente.
                           </div>
                         </div>
                       )}
