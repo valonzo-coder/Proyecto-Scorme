@@ -1,4 +1,4 @@
-import { parseCloze, ClozeSubquestion, ClozeAnswer } from './clozeParser';
+import { parseCloze, ClozeSubquestion } from './clozeParser';
 
 export type ClozeResponse = string | string[];
 export type ClozeResponseMap = Record<string, ClozeResponse>;
@@ -24,7 +24,7 @@ function parseNumeric(value: string): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-function answerFraction(sub: ClozeSubquestion, _answer: ClozeAnswer | undefined, response: ClozeResponse): number {
+function answerFraction(sub: ClozeSubquestion, response: ClozeResponse): number {
   const type = sub.canonicalType;
   const responses = Array.isArray(response) ? response : [response];
   if (type === 'SHORTANSWER' || type === 'SHORTANSWER_C') {
@@ -76,7 +76,7 @@ export function evaluateCloze(source: string, responses: ClozeResponseMap, point
     const response = responses[sub.id];
     const answered = Array.isArray(response) ? response.length > 0 : String(response ?? '').trim().length > 0;
     const fraction = answered && sub.supported && sub.canonicalType
-      ? answerFraction(sub, sub.answers[0], response as ClozeResponse)
+      ? answerFraction(sub, response as ClozeResponse)
       : 0;
     const earned = fraction * sub.weight;
     const matchingAnswer = sub.answers.find(a => a.text === String(response ?? ''));
