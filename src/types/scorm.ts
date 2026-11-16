@@ -57,6 +57,14 @@ export interface ClozeSubquestionInfo {
   weight: number;
   subType: string;
   rawBody: string;
+  canonicalType?: string | null;
+  alias?: string | null;
+  start?: number;
+  end?: number;
+  supported?: boolean;
+  extension?: boolean;
+  errors?: string[];
+  answers?: Array<{ raw: string; text: string; fraction: number | null; feedback: string; correctMarker: boolean }>;
 }
 
 export interface QuestionItem {
