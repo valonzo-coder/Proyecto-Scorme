@@ -445,6 +445,12 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleToggleRichMode(!useRichPrompt)}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
+                >
+                  <Code2 className="w-3.5 h-3.5" />
+                  <span>{useRichPrompt ? 'Cambiar a texto simple' : 'Usar editor enriquecido (HTML/Imágenes/KaTeX)'}</span>
+                </button>
+              )}
             </div>
 
               {options.map((opt, idx) => (
