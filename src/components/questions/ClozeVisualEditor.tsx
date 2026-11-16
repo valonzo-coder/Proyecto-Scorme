@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, Code2, Eye, EyeOff, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { ClozeQuestionRenderer } from './ClozeQuestionRenderer';
-import { ClozeResponseMap } from '../../services/clozeEvaluation';
+import { ClozeResponseMap, evaluateCloze } from '../../services/clozeEvaluation';
 import { ClozeAnswer, ClozeCanonicalType, ClozeSubquestion, getClozeTypeCatalog, parseCloze } from '../../services/clozeParser';
 
 interface Props {
@@ -95,7 +95,7 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
     answers: [...sub.answers, createAnswer(sub.canonicalType!)]
   });
 
-  const previewPoints = parsed.subquestions.reduce((sum, item) => sum + item.weight, 0);
+  const previewPoints = parsed.subquestions.reduce((sum, item) => sum + item.weight, 0);\n  const previewEvaluation = useMemo(() => evaluateCloze(value, responses, 10), [value, responses]);
   const catalog = getClozeTypeCatalog();
 
   return (
@@ -203,8 +203,8 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
         </div>
         {showPreview && <div className="space-y-3 p-3">
           <ClozeQuestionRenderer source={value} value={responses} onChange={setResponses} />
-          <div className="rounded-lg bg-slate-50 p-2 text-[10px] text-slate-500">La vista previa permite comprobar la ubicación y el tipo de cada control. La puntuación definitiva se calcula al responder dentro de una evaluación.</div>
-          {parsed.subquestions.length > 0 && <div className="text-[10px] font-semibold text-slate-600">Ponderación total: {previewPoints}</div>}
+          <div className="rounded-lg bg-slate-50 p-2 text-[10px] text-slate-500">La vista previa permite comprobar la ubicación y el tipo de cada control. La puntuación se calcula con el motor Cloze compartido.</div>
+          {parsed.subquestions.length > 0 && <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-semibold text-slate-600"><span>Ponderación total: {previewPoints}</span>{previewEvaluation.allAnswered && <span className="rounded-md bg-indigo-50 px-2 py-1 text-indigo-800">Resultado de prueba: {previewEvaluation.earnedPoints.toFixed(2)} / {previewEvaluation.maximumPoints.toFixed(2)} puntos</span>}</div>}
         </div>}
       </div>
     </div>
