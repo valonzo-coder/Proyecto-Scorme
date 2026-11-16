@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, Code2, Eye, EyeOff, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { ClozeQuestionRenderer } from './ClozeQuestionRenderer';
 import { ClozeResponseMap } from '../../services/clozeEvaluation';
@@ -51,7 +51,7 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
   const [showPreview, setShowPreview] = useState(true);
   const [responses, setResponses] = useState<ClozeResponseMap>({});
   const [newType, setNewType] = useState<ClozeCanonicalType>('SHORTANSWER');
-  const [newWeight, setNewWeight] = useState(1);
+  const [newWeight, setNewWeight] = useState(1);\n  const [cursorPosition, setCursorPosition] = useState<number | null>(null);\n  const sourceRef = useRef<HTMLTextAreaElement>(null);
 
   const updateQuestion = (sub: ClozeSubquestion, patch: Partial<Pick<ClozeSubquestion, 'weight' | 'canonicalType' | 'answers'>>) => {
     if (!sub.canonicalType && !patch.canonicalType) return;
@@ -69,13 +69,13 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
           { ...createAnswer(newType), text: 'Opción alternativa', fraction: 0, correctMarker: false }
         ];
     const addition = serializeSubquestion({} as ClozeSubquestion, newType, Math.max(0.1, newWeight), defaults);
-    onChange((value || '') + (value && !/[\\s]$/.test(value) ? ' ' : '') + addition);
+    const position = cursorPosition ?? value.length;\n    const before = value.slice(0, position);\n    const after = value.slice(position);\n    const prefix = before && !/[\\s>]$/.test(before) ? ' ' : '';\n    const suffix = after && !/^[\\s<]/.test(after) ? ' ' : '';\n    onChange(before + prefix + addition + suffix + after);\n    setCursorPosition(position + prefix.length + addition.length + suffix.length);
   };
 
   const removeQuestion = (sub: ClozeSubquestion) => {
     const before = value.slice(0, sub.start);
     const after = value.slice(sub.end);
-    onChange((before + after).replace(/\\s{2,}/g, ' '));
+    onChange(before + after);
   };
 
   const updateAnswer = (sub: ClozeSubquestion, index: number, patch: Partial<ClozeAnswer>) => {
@@ -136,7 +136,7 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
             <Plus className="h-4 w-4" /> Insertar respuesta
           </button>
         </div>
-        <p className="text-[10px] text-slate-500">El nuevo espacio se agrega al final del enunciado. Puedes copiarlo y moverlo dentro del texto desde el campo de contenido.</p>
+        <p className="text-[10px] text-slate-500">El nuevo espacio se inserta donde está el cursor del enunciado; si no seleccionaste una posición, se agrega al final.</p>
       </div>
 
       <div className="space-y-3">
