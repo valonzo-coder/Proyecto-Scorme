@@ -1219,7 +1219,6 @@ export class MoodleXmlService {
         );
       } else if (moodleType === 'cloze' || moodleType === 'multianswer') {
         mappedType = 'cloze';
-        supportStatus = 'partial';
         // Cloze offsets and multimedia paths must refer to the exact sanitized HTML used by the editor/player.
         const clozeHtml = sanitizeMoodleHtml(promptHtml);
         const subs = extractClozeSubquestions(clozeHtml);
@@ -1227,6 +1226,9 @@ export class MoodleXmlService {
           rawText: clozeHtml,
           subquestions: subs
         };
+        supportStatus = subs.length > 0 && subs.every(sub => sub.supported === true && !!sub.canonicalType)
+          ? 'supported'
+          : 'partial';
         if (subs.some(sub => !sub.supported)) {
           warnings.push(`Pregunta Cloze: se detectaron ${subs.filter(sub => !sub.supported).length} subpregunta(s) de extensión no estándar; se conserva su sintaxis, pero no se califican.`);
         }
