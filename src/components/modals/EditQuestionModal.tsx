@@ -238,18 +238,9 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
     const clozeData = type === 'cloze' && parsedCloze ? {
       rawText: effectivePromptHtml || clozeSource,
       subquestions: parsedCloze.subquestions.map(sub => ({
-        index: sub.index,
-        weight: sub.weight,
-        subType: sub.originalType,
-        rawBody: sub.rawBody,
-        canonicalType: sub.canonicalType,
-        alias: sub.alias,
-        start: sub.start,
-        end: sub.end,
-        supported: sub.supported,
-        extension: sub.extension,
-        errors: sub.errors,
-        answers: sub.answers
+        index: sub.index, weight: sub.weight, subType: sub.originalType, rawBody: sub.rawBody,
+        canonicalType: sub.canonicalType, alias: sub.alias, start: sub.start, end: sub.end,
+        supported: sub.supported, extension: sub.extension, errors: sub.errors, answers: sub.answers
       }))
     } : undefined;
     const autoGradable = type === 'cloze'
@@ -442,16 +433,70 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-slate-700">Enunciado o Pregunta</label>
               {type !== 'cloze' && (
-                <button
-                  type="button"
-                  onClick={() => handleToggleRichMode(!useRichPrompt)}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
-                >
-                  <Code2 className="w-3.5 h-3.5" />
-                  <span>{useRichPrompt ? 'Cambiar a texto simple' : 'Usar editor enriquecido (HTML/Imágenes/KaTeX)'}</span>
-                </button>
+              <button
+                type="button"
+                onClick={() => handleToggleRichMode(!useRichPrompt)}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
+              >
+                <Code2 className="w-3.5 h-3.5" />
+                <span>{useRichPrompt ? 'Cambiar a texto simple' : 'Usar editor enriquecido (HTML/Imágenes/KaTeX)'}</span>
+              </button>
               )}
             </div>
+
+            {type === 'cloze' ? (
+              <ClozeVisualEditor
+                value={clozeSource}
+                onChange={(source) => {
+                  setClozeSource(source);
+                  if (validationError) setValidationError(null);
+                }}
+              />
+            ) : useRichPrompt ? (
+              <RichTextEditor
+                content={promptHtml}
+                onChange={(html) => {
+                  setPromptHtml(html);
+                  if (validationError) setValidationError(null);
+                }}
+                placeholder="Redacta el enunciado con formato, tablas, imágenes o fórmulas..."
+              />
+            ) : (
+              <textarea
+                rows={3}
+                value={prompt}
+                onChange={(e) => {
+                  setPrompt(e.target.value);
+                  if (validationError) setValidationError(null);
+                }}
+                placeholder="Escribe claramente la pregunta o consigna para el estudiante..."
+                className="w-full text-xs text-slate-800 p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            )}
+          </div>
+
+          {/* Type Specific Fields */}
+          {(type === 'multiple_choice' || type === 'multiple_response') && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700">
+                  Opciones de Respuesta ({type === 'multiple_choice' ? 'Marca la única correcta' : 'Marca todas las correctas'})
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setValidationError(null);
+                    setOptions([
+                      ...options,
+                      { id: `opt-${Date.now()}-${options.length}`, text: '', isCorrect: false }
+                    ]);
+                  }}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Agregar opción</span>
+                </button>
+              </div>
 
               {options.map((opt, idx) => (
                 <div key={opt.id} className="flex items-center gap-2">
