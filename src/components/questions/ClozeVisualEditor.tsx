@@ -51,7 +51,9 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
   const [showPreview, setShowPreview] = useState(true);
   const [responses, setResponses] = useState<ClozeResponseMap>({});
   const [newType, setNewType] = useState<ClozeCanonicalType>('SHORTANSWER');
-  const [newWeight, setNewWeight] = useState(1);\n  const [cursorPosition, setCursorPosition] = useState<number | null>(null);\n  const sourceRef = useRef<HTMLTextAreaElement>(null);
+  const [newWeight, setNewWeight] = useState(1);
+  const [cursorPosition, setCursorPosition] = useState<number | null>(null);
+  const sourceRef = useRef<HTMLTextAreaElement>(null);
 
   const updateQuestion = (sub: ClozeSubquestion, patch: Partial<Pick<ClozeSubquestion, 'weight' | 'canonicalType' | 'answers'>>) => {
     if (!sub.canonicalType && !patch.canonicalType) return;
@@ -69,7 +71,13 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
           { ...createAnswer(newType), text: 'Opción alternativa', fraction: 0, correctMarker: false }
         ];
     const addition = serializeSubquestion({} as ClozeSubquestion, newType, Math.max(0.1, newWeight), defaults);
-    const position = cursorPosition ?? value.length;\n    const before = value.slice(0, position);\n    const after = value.slice(position);\n    const prefix = before && !/[\\s>]$/.test(before) ? ' ' : '';\n    const suffix = after && !/^[\\s<]/.test(after) ? ' ' : '';\n    onChange(before + prefix + addition + suffix + after);\n    setCursorPosition(position + prefix.length + addition.length + suffix.length);
+    const position = cursorPosition ?? value.length;
+    const before = value.slice(0, position);
+    const after = value.slice(position);
+    const prefix = before && !/[\\s>]$/.test(before) ? ' ' : '';
+    const suffix = after && !/^[\\s<]/.test(after) ? ' ' : '';
+    onChange(before + prefix + addition + suffix + after);
+    setCursorPosition(position + prefix.length + addition.length + suffix.length);
   };
 
   const removeQuestion = (sub: ClozeSubquestion) => {
