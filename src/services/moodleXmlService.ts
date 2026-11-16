@@ -1492,6 +1492,13 @@ export class MoodleXmlService {
         return out;
       };
 
+      const persistedClozeHtml = draft.clozeData
+        ? sanitizeMoodleHtml(replaceAttachmentTokens(draft.clozeData.rawText) || '')
+        : undefined;
+      const persistedClozeData = persistedClozeHtml !== undefined
+        ? { rawText: persistedClozeHtml, subquestions: extractClozeSubquestions(persistedClozeHtml) }
+        : undefined;
+
       const targetCategoryId = resolveTargetCategoryId(draft);
       const clozeFullySupported = draft.mappedType === 'cloze' &&
         !!draft.clozeData?.subquestions?.length &&
@@ -1527,7 +1534,7 @@ export class MoodleXmlService {
         feedbackPartiallyCorrectHtml: replaceAttachmentTokens(draft.feedbackPartiallyCorrectHtml),
         feedbackIncorrectHtml: replaceAttachmentTokens(draft.feedbackIncorrectHtml),
         rawMoodleType: draft.moodleType,
-        clozeData: draft.clozeData,
+        clozeData: persistedClozeData,
         importWarnings: draft.warnings.length > 0 ? [...draft.warnings] : undefined,
         pendingAdaptation: pendingAdaptation || undefined,
         externalMediaUrls: draft.externalMediaUrls.length > 0 ? draft.externalMediaUrls : undefined
