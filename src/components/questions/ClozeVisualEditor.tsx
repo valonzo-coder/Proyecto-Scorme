@@ -95,7 +95,8 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
     answers: [...sub.answers, createAnswer(sub.canonicalType!)]
   });
 
-  const previewPoints = parsed.subquestions.reduce((sum, item) => sum + item.weight, 0);\n  const previewEvaluation = useMemo(() => evaluateCloze(value, responses, 10), [value, responses]);
+  const previewPoints = parsed.subquestions.reduce((sum, item) => sum + item.weight, 0);
+  const previewEvaluation = useMemo(() => evaluateCloze(value, responses, 10), [value, responses]);
   const catalog = getClozeTypeCatalog();
 
   return (
