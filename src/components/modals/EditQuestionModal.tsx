@@ -264,7 +264,8 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
       name: name.trim() || undefined,
       type,
       prompt: effectivePrompt,
-      promptHtml: type === 'cloze' || useRichPrompt ? effectivePromptHtml : undefined,\n      clozeData,
+      promptHtml: type === 'cloze' || useRichPrompt ? effectivePromptHtml : undefined,
+      clozeData,
       explanation: explanation.trim(),
       explanationHtml:
         explanationHtml && htmlToPlainText(explanationHtml) === explanation.trim()
@@ -441,9 +442,15 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-slate-700">Enunciado o Pregunta</label>
               {type !== 'cloze' && (
-              <button
-                type="button"
-                onClick={() => handleToggleRichMode(!useRichPrompt)}
+                <button
+                  type="button"
+                  onClick={() => handleToggleRichMode(!useRichPrompt)}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
+                >
+                  <Code2 className="w-3.5 h-3.5" />
+                  <span>{useRichPrompt ? 'Cambiar a texto simple' : 'Usar editor enriquecido (HTML/Imágenes/KaTeX)'}</span>
+                </button>
+              )}
                 className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
               >
                 <Code2 className="w-3.5 h-3.5" />
