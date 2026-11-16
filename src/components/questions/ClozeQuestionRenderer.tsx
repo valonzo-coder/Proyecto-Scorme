@@ -13,7 +13,7 @@ interface ClozeQuestionRendererProps {
 }
 
 function plainOptionLabel(value: string): string {
-  return value.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();
+  return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function ClozeControl({ question, value, onChange, disabled, seed }: {
