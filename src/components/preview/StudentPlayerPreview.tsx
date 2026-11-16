@@ -52,6 +52,8 @@ import {
   createEmptyPageRuntime
 } from '../../services/navigationService';
 import { SafeRichContent } from '../questions/SafeRichContent';
+import { ClozeQuestionRenderer } from '../questions/ClozeQuestionRenderer';
+import { evaluateCloze, ClozeResponseMap } from '../../services/clozeEvaluation';
 
 interface StudentPlayerPreviewProps {
   project: CourseProject;
@@ -593,7 +595,10 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
     questions.forEach(q => {
       total += q.points;
       const userAns = quizAnswers[q.id];
-      if (NavigationService.evaluateQuestionAnswer(q, userAns)) {
+      if (q.type === 'cloze' && q.clozeData?.rawText) {
+        const result = evaluateCloze(q.clozeData.rawText, (userAns || {}) as ClozeResponseMap, q.points);
+        earned += result.earnedPoints;
+      } else if (NavigationService.evaluateQuestionAnswer(q, userAns)) {
         earned += q.points;
       }
     });
@@ -2041,8 +2046,11 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                             quizAnswers[q.id] && typeof quizAnswers[q.id] === 'object' && !Array.isArray(quizAnswers[q.id])
                               ? quizAnswers[q.id]
                               : {};
+                          const clozeResult = q.type === 'cloze' && q.clozeData?.rawText
+                            ? evaluateCloze(q.clozeData.rawText, (quizAnswers[q.id] || {}) as ClozeResponseMap, q.points)
+                            : null;
                           const isQCorrect = assessmentSubmitted
-                            ? NavigationService.evaluateQuestionAnswer(q, quizAnswers[q.id])
+                            ? (clozeResult ? clozeResult.allCorrect : NavigationService.evaluateQuestionAnswer(q, quizAnswers[q.id]))
                             : null;
 
                           return (
@@ -2059,6 +2067,17 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
                                   ({q.points} pts)
                                 </span>
                               </div>
+
+                              {q.type === 'cloze' && q.clozeData?.rawText && (
+                                <ClozeQuestionRenderer
+                                  source={q.clozeData.rawText}
+                                  value={(quizAnswers[q.id] || {}) as ClozeResponseMap}
+                                  disabled={attemptsExhausted || assessmentSubmitted}
+                                  onChange={(value) => setQuizAnswers(prev => ({ ...prev, [q.id]: value }))}
+                                  showFeedback={assessmentSubmitted && activeAssessment.showFeedback}
+                                  idPrefix={q.id}
+                                />
+                              )}
 
                               {q.type === 'multiple_choice' && (
                                 <div className="space-y-1.5">
