@@ -1946,9 +1946,9 @@ body {
           h += '    <span style="font-size:11px;font-family:monospace;background:#fff;padding:2px 8px;border:1px solid #bfdbfe;border-radius:5px;">Intentos: ' + attempts + '/' + maxAttempts + '</span>';
         }
         h += '  </div>';
-        if (q.promptHtml) {
+        if (q.type !== 'cloze' && q.promptHtml) {
           h += '  <div class="question-prompt block-text">' + q.promptHtml + '</div>';
-        } else {
+        } else if (q.type !== 'cloze') {
           h += '  <div class="question-prompt">' + escapeHtml(q.prompt) + '</div>';
         }
 
