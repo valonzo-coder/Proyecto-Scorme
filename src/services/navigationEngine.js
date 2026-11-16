@@ -95,13 +95,20 @@ export function initNavigationEngine() {
       q.type === 'true_false' ||
       q.type === 'fill_blank' ||
       q.type === 'matching' ||
-      q.type === 'numerical'
+      q.type === 'numerical' ||
+      q.type === 'cloze'
     );
   }
 
   function isQuestionValid(q) {
     if (!q || !q.type || !String(q.prompt || '').trim()) return false;
     if (!isQuestionAutoGradable(q)) return false;
+    if (q.type === 'cloze') {
+      var clozeSubs = q.clozeData && Array.isArray(q.clozeData.subquestions) ? q.clozeData.subquestions : [];
+      return clozeSubs.length > 0 && clozeSubs.every(function (sub) {
+        return sub && sub.supported === true && sub.canonicalType && Array.isArray(sub.answers) && sub.answers.length > 0;
+      });
+    }
     if (q.type === 'multiple_choice' || q.type === 'multiple_response') {
       var opts = Array.isArray(q.options) ? q.options : [];
       if (opts.length === 0) return false;
@@ -137,6 +144,14 @@ export function initNavigationEngine() {
 
   function hasValidAnswer(q, answer) {
     if (!q) return false;
+    if (q.type === 'cloze') {
+      if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return false;
+      var clozeSubs = q.clozeData && Array.isArray(q.clozeData.subquestions) ? q.clozeData.subquestions : [];
+      return clozeSubs.length > 0 && clozeSubs.every(function (sub, idx) {
+        var value = answer['cloze-' + (sub.index || idx + 1)];
+        return Array.isArray(value) ? value.length > 0 : String(value || '').trim().length > 0;
+      });
+    }
     if (q.type === 'multiple_choice') {
       return typeof answer === 'string' && answer.trim().length > 0;
     }
@@ -169,6 +184,48 @@ export function initNavigationEngine() {
 
   function evaluateQuestionAnswer(q, answer) {
     if (!isQuestionValid(q) || !hasValidAnswer(q, answer)) return false;
+
+    if (q.type === 'cloze') {
+      var subs = q.clozeData.subquestions || [];
+      return subs.every(function (sub, idx) {
+        var type = sub.canonicalType || sub.subType;
+        var value = answer['cloze-' + (sub.index || idx + 1)];
+        var values = Array.isArray(value) ? value.map(String) : [String(value || '')];
+        var entries = sub.answers || [];
+        function fraction(entry) {
+          return entry.fraction !== null && entry.fraction !== undefined
+            ? Number(entry.fraction)
+            : (entry.correctMarker ? 100 : 0);
+        }
+        if (type === 'SHORTANSWER' || type === 'SA' || type === 'MW' || type === 'SHORTANSWER_C' || type === 'SAC' || type === 'MWC') {
+          var sensitive = type === 'SHORTANSWER_C' || type === 'SAC' || type === 'MWC';
+          var submitted = values[0].trim().normalize('NFC');
+          var match = entries.find(function (entry) {
+            var candidate = String(entry.text || '').trim().normalize('NFC');
+            return candidate !== '*' && (sensitive ? candidate === submitted : candidate.toLowerCase() === submitted.toLowerCase());
+          }) || entries.find(function (entry) { return entry.text === '*'; });
+          return !!match && fraction(match) >= 100;
+        }
+        if (type === 'NUMERICAL' || type === 'NM') {
+          var n = Number(values[0].trim().replace(',', '.'));
+          if (!isFinite(n)) return false;
+          var numeric = entries.find(function (entry) {
+            var expected = Number(String(entry.text || '').replace(',', '.'));
+            return isFinite(expected) && Math.abs(n - expected) <= Math.max(0, Number(entry.tolerance || 0)) + 1e-9;
+          });
+          return !!numeric && fraction(numeric) >= 100;
+        }
+        var isMulti = type.indexOf('MULTIRESPONSE') === 0 || type === 'MR' || type === 'MRH';
+        if (isMulti) {
+          var sum = entries.reduce(function (total, entry) {
+            return total + (values.indexOf(String(entry.text)) >= 0 ? fraction(entry) : 0);
+          }, 0);
+          return Math.max(0, Math.min(100, sum)) >= 100;
+        }
+        var chosen = entries.find(function (entry) { return values.indexOf(String(entry.text)) >= 0; });
+        return !!chosen && fraction(chosen) >= 100;
+      });
+    }
 
     if (q.type === 'multiple_choice') {
       var opts = q.options || [];
