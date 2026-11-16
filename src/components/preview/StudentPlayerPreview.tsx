@@ -732,6 +732,7 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
     const currentBlankDraft: string = draftBlank[q.id] ?? (typeof userAnswer === 'string' ? userAnswer : '');
     const currentMatchDraft: Record<string, string> =
       draftMatch[q.id] ?? (userAnswer && typeof userAnswer === 'object' && !Array.isArray(userAnswer) ? userAnswer : {});
+    const currentClozeDraft = (draftMatch[q.id] || userAnswer || {}) as ClozeResponseMap;
     const shuffledRightOptions = q.matchingPairs
       ? seededSort(q.matchingPairs.map(p => p.right), `chk_${q.id}`, r => r)
       : [];
@@ -757,6 +758,32 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
         {!NavigationService.isQuestionAutoGradable(q) && (
           <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
             Este tipo de pregunta ({q.type}) no admite autocorrección automática. Edita la página para vincular una pregunta compatible.
+          </div>
+        )}
+
+        {q.type === 'cloze' && q.clozeData?.rawText && (
+          <div className="space-y-2">
+            <ClozeQuestionRenderer
+              source={q.clozeData.rawText}
+              value={currentClozeDraft}
+              disabled={lockedByAttempts || isChecked}
+              onChange={(value) => setDraftMatch(prev => ({ ...prev, [q.id]: value as any }))}
+              showFeedback={isChecked && showFeedback}
+              idPrefix={q.id}
+            />
+            <button
+              type="button"
+              disabled={lockedByAttempts || isChecked || !NavigationService.hasValidAnswer(q, currentClozeDraft)}
+              onClick={() => handleAnswerPageQuestion(q, currentClozeDraft)}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg"
+            >
+              Comprobar respuestas
+            </button>
+            {isChecked && showFeedback && (
+              <p className={isCorrect ? 'text-xs font-semibold text-emerald-700' : 'text-xs font-semibold text-rose-700'}>
+                {isCorrect ? 'Todas las respuestas son correctas.' : 'Revisa tus respuestas e inténtalo nuevamente.'}
+              </p>
+            )}
           </div>
         )}
 
