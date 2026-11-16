@@ -87,7 +87,6 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
     answers: [...sub.answers, createAnswer(sub.canonicalType!)]
   });
 
-  const isTextType = (type: ClozeCanonicalType) => type === 'SHORTANSWER' || type === 'SHORTANSWER_C' || type === 'NUMERICAL';
   const previewPoints = parsed.subquestions.reduce((sum, item) => sum + item.weight, 0);
   const catalog = getClozeTypeCatalog();
 
@@ -165,7 +164,7 @@ export const ClozeVisualEditor: React.FC<Props> = ({ value, onChange }) => {
                   <div><label className={labelClass}>Ponderación</label><input className={inputClass} type="number" min="0.1" step="0.1" value={sub.weight} onChange={event => updateQuestion(sub, { weight: Math.max(0.1, Number(event.target.value) || 0.1) })} /></div>
                 </div>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between"><span className="text-[11px] font-bold text-slate-700">Alternativas / respuestas</span>{<button type="button" onClick={() => addAnswer(sub)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"><Plus className="mr-1 inline h-3 w-3" />Agregar alternativa</button>}</div>
+                  <div className="flex items-center justify-between"><span className="text-[11px] font-bold text-slate-700">Alternativas / respuestas</span><button type="button" onClick={() => addAnswer(sub)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"><Plus className="mr-1 inline h-3 w-3" />Agregar alternativa</button></div>
                   {sub.answers.map((answer, index) => <div key={index} className="rounded-lg border border-slate-200 p-2.5 space-y-2">
                     <div className="flex items-center gap-2">
                       <input className={inputClass + ' flex-1'} value={answer.text} onChange={event => updateAnswer(sub, index, { text: event.target.value })} placeholder={type === 'NUMERICAL' ? 'Valor numérico' : 'Texto de respuesta'} />
