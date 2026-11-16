@@ -1220,14 +1220,16 @@ export class MoodleXmlService {
       } else if (moodleType === 'cloze' || moodleType === 'multianswer') {
         mappedType = 'cloze';
         supportStatus = 'partial';
-        const subs = extractClozeSubquestions(rawPromptHtml);
+        // Cloze offsets and multimedia paths must refer to the exact sanitized HTML used by the editor/player.
+        const clozeHtml = sanitizeMoodleHtml(promptHtml);
+        const subs = extractClozeSubquestions(clozeHtml);
         clozeData = {
-          rawText: rawPromptHtml,
+          rawText: clozeHtml,
           subquestions: subs
         };
-        warnings.push(
-          `Pregunta Cloze (${subs.length} subelemento(s) incrustado(s)): se importó con su estructura original como contenido pendiente de adaptación; no es reproducible como pregunta interactiva SCORM.`
-        );
+        if (subs.some(sub => !sub.supported)) {
+          warnings.push(`Pregunta Cloze: se detectaron ${subs.filter(sub => !sub.supported).length} subpregunta(s) de extensión no estándar; se conserva su sintaxis, pero no se califican.`);
+        }
       } else {
         mappedType = 'unsupported';
         supportStatus = 'unsupported';
