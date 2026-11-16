@@ -11,6 +11,7 @@ import {
 } from '../types/scorm';
 import { CategoryService, DEFAULT_CATEGORY_ID, isQuestionAutoGradable } from './categoryService';
 import { MediaService } from './mediaService';
+import { parseCloze } from './clozeParser';
 
 export const MOODLE_XML_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
 export const MOODLE_XML_MAX_QUESTIONS = 2500;
@@ -628,19 +629,20 @@ export function parseMoodleCategoryPath(rawPath: string): string[] {
 // Cloze subquestion extractor
 // ---------------------------------------------------------------------------
 function extractClozeSubquestions(rawText: string): ClozeSubquestionInfo[] {
-  const subs: ClozeSubquestionInfo[] = [];
-  const regex = /\{(\d*):([A-Z_]+):([^}]+)\}/gi;
-  let match: RegExpExecArray | null;
-  let idx = 1;
-  while ((match = regex.exec(rawText)) !== null) {
-    subs.push({
-      index: idx++,
-      weight: match[1] ? parseInt(match[1], 10) || 1 : 1,
-      subType: match[2].toUpperCase(),
-      rawBody: match[3]
-    });
-  }
-  return subs;
+  return parseCloze(rawText).subquestions.map(sub => ({
+    index: sub.index,
+    weight: sub.weight,
+    subType: sub.originalType,
+    rawBody: sub.rawBody,
+    canonicalType: sub.canonicalType,
+    alias: sub.alias,
+    start: sub.start,
+    end: sub.end,
+    supported: sub.supported,
+    extension: sub.extension,
+    errors: sub.errors,
+    answers: sub.answers
+  }));
 }
 
 // ---------------------------------------------------------------------------
