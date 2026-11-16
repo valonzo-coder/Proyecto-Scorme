@@ -440,6 +440,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-slate-700">Enunciado o Pregunta</label>
+              {type !== 'cloze' && (
               <button
                 type="button"
                 onClick={() => handleToggleRichMode(!useRichPrompt)}
@@ -448,7 +449,8 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
                 <Code2 className="w-3.5 h-3.5" />
                 <span>{useRichPrompt ? 'Cambiar a texto simple' : 'Usar editor enriquecido (HTML/Imágenes/KaTeX)'}</span>
               </button>
-            </div>
+  
+              )}          </div>
 
             {type === 'cloze' ? (
               <ClozeVisualEditor
