@@ -12,7 +12,7 @@ interface ClozeQuestionRendererProps {
   idPrefix?: string;
 }
 
-function ClozeControl({ question, value, onChange, disabled, seed }: {
+function plainOptionLabel(value: string): string {\n  return value.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction ClozeControl({ question, value, onChange, disabled, seed }: {
   question: ClozeSubquestion;
   value: string | string[] | undefined;
   onChange: (value: string | string[]) => void;
@@ -56,7 +56,7 @@ function ClozeControl({ question, value, onChange, disabled, seed }: {
       className="inline-block max-w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs"
     >
       <option value="">Selecciona...</option>
-      {options.map((answer, index) => <option key={index} value={answer.text}>{answer.text}</option>)}
+      {options.map((answer, index) => <option key={index} value={answer.text}>{plainOptionLabel(answer.text)}</option>)}
     </select>;
   }
 
@@ -78,7 +78,7 @@ function ClozeControl({ question, value, onChange, disabled, seed }: {
               else onChange(answer.text);
             }}
           />
-          <span>{answer.text}</span>
+          <SafeRichContent html={answer.text} fallbackText={answer.text} className="inline" />
         </label>;
       })}
     </span>;
