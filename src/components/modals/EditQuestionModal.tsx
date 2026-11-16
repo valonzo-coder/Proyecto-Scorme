@@ -766,7 +766,13 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
                   : `Tipo Moodle no compatible (${question?.rawMoodleType || 'desconocido'})`}
               </div>
               <p className="text-[11px] text-slate-600 leading-relaxed">
-                Cloze permite combinar respuestas cortas, numéricas, selección única y selección múltiple dentro de un mismo enunciado. Configura cada espacio en el editor visual; los tipos compatibles se califican automáticamente y se conservan en sintaxis Moodle.
+                {type === 'cloze'
+                  ? 'Cloze permite combinar respuestas cortas, numéricas, selección única y selección múltiple dentro de un mismo enunciado. Configura cada espacio en el editor visual; los tipos compatibles se califican automáticamente y se conservan en sintaxis Moodle.'
+                  : type === 'essay'
+                  ? 'Pregunta abierta que requiere revisión docente y no se califica automáticamente en SCORM.'
+                  : type === 'description'
+                  ? 'Elemento informativo que presenta contenido sin generar una respuesta calificable.'
+                  : 'El tipo importado se conserva para consulta. Revisa su compatibilidad antes de utilizarlo en una evaluación.'}
               </p>
               {type === 'cloze' && question?.clozeData && question.clozeData.subquestions.length > 0 && (
                 <div className="space-y-1 pt-1">
