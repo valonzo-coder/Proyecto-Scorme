@@ -751,9 +751,11 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
           )}
         </div>
 
-        <div className="text-xs font-bold text-slate-900">
-          <SafeRichContent html={q.promptHtml} fallbackText={q.prompt} />
-        </div>
+        {q.type === 'cloze' && q.clozeData?.rawText ? null : (
+          <div className="text-xs font-bold text-slate-900">
+            <SafeRichContent html={q.promptHtml} fallbackText={q.prompt} />
+          </div>
+        )}
 
         {!NavigationService.isQuestionAutoGradable(q) && (
           <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
