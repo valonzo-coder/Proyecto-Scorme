@@ -12,7 +12,7 @@ interface ClozeQuestionRendererProps {
   idPrefix?: string;
 }
 
-function ClozeControl({ question, value, onChange, disabled }: {
+function ClozeControl({ question, value, onChange, disabled, seed }: {
   question: ClozeSubquestion;
   value: string | string[] | undefined;
   onChange: (value: string | string[]) => void;
