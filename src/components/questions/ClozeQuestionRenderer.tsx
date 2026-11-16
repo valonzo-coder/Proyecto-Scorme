@@ -17,13 +17,22 @@ function ClozeControl({ question, value, onChange, disabled }: {
   value: string | string[] | undefined;
   onChange: (value: string | string[]) => void;
   disabled: boolean;
+  seed: string;
 }) {
   const type = question.canonicalType;
   const isMulti = type === 'MULTIRESPONSE' || type === 'MULTIRESPONSE_H' ||
     type === 'MULTIRESPONSE_S' || type === 'MULTIRESPONSE_HS';
   const shuffled = !!type?.endsWith('S');
+  const hash = (value: string) => {
+    let result = 2166136261;
+    for (let index = 0; index < value.length; index++) {
+      result ^= value.charCodeAt(index);
+      result = Math.imul(result, 16777619);
+    }
+    return result >>> 0;
+  };
   const options = shuffled
-    ? [...question.answers].sort((a, b) => a.text.localeCompare(b.text))
+    ? [...question.answers].sort((a, b) => hash(seed + a.text) - hash(seed + b.text))
     : question.answers;
   const selected = Array.isArray(value) ? value : value == null ? [] : [String(value)];
 
@@ -95,6 +104,7 @@ export const ClozeQuestionRenderer: React.FC<ClozeQuestionRendererProps> = ({
             value={value[segment.question.id]}
             onChange={answer => setAnswer(segment.question, answer)}
             disabled={disabled || !segment.question.supported}
+            seed={idPrefix + '-' + segment.question.id}
           />
         </span>
     )}
