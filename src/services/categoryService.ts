@@ -16,7 +16,8 @@ export const AUTO_GRADABLE_QUESTION_TYPES: QuestionType[] = [
   'true_false',
   'fill_blank',
   'matching',
-  'numerical'
+  'numerical',
+  'cloze'
 ];
 
 export interface CategoryTreeNode {
@@ -34,8 +35,12 @@ export interface DeleteCategoryStrategy {
   targetSubcategoryParentId?: string | null;
 }
 
-export function isQuestionAutoGradable(q: Pick<QuestionItem, 'type'> | null | undefined): boolean {
-  if (!q) return false;
+export function isQuestionAutoGradable(q: QuestionItem | null | undefined): boolean {
+  if (!q || q.pendingAdaptation) return false;
+  if (q.type === 'cloze') {
+    const subquestions = q.clozeData?.subquestions || [];
+    return subquestions.length > 0 && subquestions.every(sub => sub.supported === true && !!sub.canonicalType);
+  }
   return AUTO_GRADABLE_QUESTION_TYPES.includes(q.type);
 }
 
@@ -54,7 +59,7 @@ export function getQuestionSupportInfo(q: QuestionItem): {
           ? 'Ensayo (revisión docente, no autocorregible en SCORM)'
           : q.type === 'description'
           ? 'Descripción informativa (sin calificación)'
-          : 'Cloze (pendiente de adaptación para evaluación SCORM)'
+          : 'Cloze (requiere que todas las subpreguntas sean compatibles)'
     };
   }
   return { status: 'unsupported', label: 'Tipo no compatible con calificación automática SCORM' };
