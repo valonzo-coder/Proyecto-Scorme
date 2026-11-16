@@ -768,14 +768,14 @@ export const StudentPlayerPreview: React.FC<StudentPlayerPreviewProps> = ({
             <ClozeQuestionRenderer
               source={q.clozeData.rawText}
               value={currentClozeDraft}
-              disabled={lockedByAttempts || isChecked}
+              disabled={lockedByAttempts}
               onChange={(value) => setDraftMatch(prev => ({ ...prev, [q.id]: value as any }))}
               showFeedback={isChecked && showFeedback}
               idPrefix={q.id}
             />
             <button
               type="button"
-              disabled={lockedByAttempts || isChecked || !NavigationService.hasValidAnswer(q, currentClozeDraft)}
+              disabled={lockedByAttempts || !NavigationService.hasValidAnswer(q, currentClozeDraft)}
               onClick={() => handleAnswerPageQuestion(q, currentClozeDraft)}
               className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg"
             >
