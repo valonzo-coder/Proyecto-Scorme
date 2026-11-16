@@ -2385,6 +2385,126 @@ body {
         return out;
       }
 
+      function scoreClozeQuestion(q, responseMap) {
+        var subs = q.clozeData && Array.isArray(q.clozeData.subquestions) ? q.clozeData.subquestions : [];
+        var totalWeight = 0;
+        var earnedWeight = 0;
+        var allCorrect = subs.length > 0;
+        subs.forEach(function(sub, idx) {
+          var weight = Number(sub.weight) > 0 ? Number(sub.weight) : 1;
+          totalWeight += weight;
+          var type = sub.canonicalType || sub.subType;
+          var response = responseMap && responseMap['cloze-' + (sub.index || idx + 1)];
+          var values = Array.isArray(response) ? response.map(String) : [String(response || '')];
+          var entries = sub.answers || [];
+          var fraction = function(entry) {
+            return entry.fraction !== null && entry.fraction !== undefined
+              ? Number(entry.fraction)
+              : (entry.correctMarker ? 100 : 0);
+          };
+          var score = 0;
+          if (sub.supported === true) {
+            if (type === 'SHORTANSWER' || type === 'SA' || type === 'MW' || type === 'SHORTANSWER_C' || type === 'SAC' || type === 'MWC') {
+              var sensitive = type === 'SHORTANSWER_C' || type === 'SAC' || type === 'MWC';
+              var submitted = values[0].trim().normalize('NFC');
+              var matched = entries.find(function(entry) {
+                var candidate = String(entry.text || '').trim().normalize('NFC');
+                return candidate !== '*' && (sensitive ? candidate === submitted : candidate.toLowerCase() === submitted.toLowerCase());
+              }) || entries.find(function(entry) { return entry.text === '*'; });
+              score = matched ? fraction(matched) / 100 : 0;
+            } else if (type === 'NUMERICAL' || type === 'NM') {
+              var num = Number(values[0].trim().replace(',', '.'));
+              var matchedNum = isFinite(num) ? entries.find(function(entry) {
+                var expected = Number(String(entry.text || '').replace(',', '.'));
+                return isFinite(expected) && Math.abs(num - expected) <= Math.max(0, Number(entry.tolerance || 0)) + 1e-9;
+              }) : null;
+              score = matchedNum ? fraction(matchedNum) / 100 : 0;
+            } else if (String(type).indexOf('MULTIRESPONSE') === 0 || type === 'MR' || type === 'MRH') {
+              var sum = entries.reduce(function(acc, entry) {
+                return acc + (values.indexOf(String(entry.text)) >= 0 ? fraction(entry) / 100 : 0);
+              }, 0);
+              score = Math.max(0, Math.min(1, sum));
+            } else {
+              var chosen = entries.find(function(entry) { return values.indexOf(String(entry.text)) >= 0; });
+              score = chosen ? fraction(chosen) / 100 : 0;
+            }
+          }
+          score = Math.max(0, Math.min(1, score));
+          earnedWeight += score * weight;
+          if (score < 1 || sub.supported !== true) allCorrect = false;
+        });
+        return {
+          fraction: totalWeight > 0 ? Math.max(0, Math.min(1, earnedWeight / totalWeight)) : 0,
+          earnedPoints: totalWeight > 0 ? Math.max(0, Math.min(1, earnedWeight / totalWeight)) * Number(q.points || 0) : 0,
+          allCorrect: allCorrect
+        };
+      }
+
+      function renderClozeQuestion(q, responseMap, disabled) {
+        var source = q.clozeData && q.clozeData.rawText ? String(q.clozeData.rawText) : '';
+        var subs = q.clozeData && Array.isArray(q.clozeData.subquestions) ? q.clozeData.subquestions : [];
+        var html = '';
+        var cursor = 0;
+        subs.forEach(function(sub, idx) {
+          var start = Number(sub.start);
+          var end = Number(sub.end);
+          if (!isFinite(start) || !isFinite(end) || start < cursor || end > source.length || end <= start) return;
+          html += '<span>' + escapeHtml(source.slice(cursor, start)) + '</span>';
+          var type = sub.canonicalType || sub.subType;
+          var subId = 'cloze-' + (sub.index || idx + 1);
+          var current = responseMap[subId];
+          var selected = Array.isArray(current) ? current.map(String) : [String(current || '')];
+          var answers = sub.answers || [];
+          if (type === 'SHORTANSWER' || type === 'SA' || type === 'MW' || type === 'SHORTANSWER_C' || type === 'SAC' || type === 'MWC' || type === 'NUMERICAL' || type === 'NM') {
+            html += '<input class="cloze-inline-input" type="text" inputmode="' + ((type === 'NUMERICAL' || type === 'NM') ? 'decimal' : 'text') + '" value="' + escapeAttr(selected[0]) + '" ' + (disabled ? 'disabled' : '') + ' oninput="window.recordClozeAnswer(\\'' + escapeAttr(q.id) + '\\',\\'' + subId + '\\',this.value)" style="display:inline-block;min-width:90px;max-width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;margin:2px;">';
+          } else {
+            var multi = String(type).indexOf('MULTIRESPONSE') === 0 || type === 'MR' || type === 'MRH';
+            var shuffled = String(type).endsWith('S');
+            var ordered = shuffled ? answers.slice().sort(function(a,b) { return String(a.text).localeCompare(String(b.text)); }) : answers;
+            if (type === 'MULTICHOICE' || type === 'MC' || type === 'MULTICHOICE_S' || type === 'MCS') {
+              html += '<select ' + (disabled ? 'disabled' : '') + ' onchange="window.recordClozeAnswer(\\'' + escapeAttr(q.id) + '\\',\\'' + subId + '\\',this.value)" style="display:inline-block;max-width:100%;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;margin:2px;"><option value="">Selecciona...</option>';
+              ordered.forEach(function(answer) {
+                html += '<option value="' + escapeAttr(answer.text) + '" ' + (selected[0] === answer.text ? 'selected' : '') + '>' + escapeHtml(answer.text) + '</option>';
+              });
+              html += '</select>';
+            } else {
+              var horizontal = String(type).endsWith('_H') || String(type).endsWith('_HS');
+              html += '<span style="display:inline-flex;flex-direction:' + (horizontal ? 'row' : 'column') + ';flex-wrap:wrap;gap:6px;margin:3px;">';
+              ordered.forEach(function(answer, answerIndex) {
+                var checked = selected.indexOf(String(answer.text)) >= 0;
+                var inputType = multi ? 'checkbox' : 'radio';
+                var onChange = multi
+                  ? "window.toggleClozeAnswer('" + escapeAttr(q.id) + "','" + subId + "','" + escapeAttr(answer.text) + "',this.checked)"
+                  : "window.recordClozeAnswer('" + escapeAttr(q.id) + "','" + subId + "','" + escapeAttr(answer.text) + "')";
+                html += '<label style="display:inline-flex;align-items:center;gap:5px;font-size:13px;"><input type="' + inputType + '" name="cloze_' + escapeAttr(q.id) + '_' + subId + '" ' + (checked ? 'checked' : '') + ' ' + (disabled ? 'disabled' : '') + ' onchange="' + onChange + '"> ' + escapeHtml(answer.text) + '</label>';
+              });
+              html += '</span>';
+            }
+          }
+          html += '<span>' + escapeHtml(source.slice(start, end)) + '</span>';
+          cursor = end;
+        });
+        html += '<span>' + escapeHtml(source.slice(cursor)) + '</span>';
+        return '<div class="cloze-question-content" style="line-height:2.4;">' + html + '</div>';
+      }
+
+      window.recordClozeAnswer = function(questionId, subId, value) {
+        if (!quizAnswers[questionId] || typeof quizAnswers[questionId] !== 'object' || Array.isArray(quizAnswers[questionId])) {
+          quizAnswers[questionId] = {};
+        }
+        quizAnswers[questionId][subId] = value;
+      };
+
+      window.toggleClozeAnswer = function(questionId, subId, value, checked) {
+        if (!quizAnswers[questionId] || typeof quizAnswers[questionId] !== 'object' || Array.isArray(quizAnswers[questionId])) {
+          quizAnswers[questionId] = {};
+        }
+        var current = Array.isArray(quizAnswers[questionId][subId]) ? quizAnswers[questionId][subId].slice() : [];
+        if (checked && current.indexOf(value) < 0) current.push(value);
+        if (!checked) current = current.filter(function(item) { return item !== value; });
+        quizAnswers[questionId][subId] = current;
+      };
+
       function renderAssessment(examId) {
         activeView = 'assessment';
         activeAssessmentId = examId;
