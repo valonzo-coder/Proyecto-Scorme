@@ -157,8 +157,10 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
   };
 
   const handleSave = () => {
-    const effectivePromptHtml = useRichPrompt ? sanitizeMoodleHtml(promptHtml) : '';
-    const effectivePrompt = useRichPrompt
+    const effectivePromptHtml = type === 'cloze'
+      ? sanitizeMoodleHtml(clozeSource)
+      : useRichPrompt ? sanitizeMoodleHtml(promptHtml) : '';
+    const effectivePrompt = type === 'cloze' || useRichPrompt
       ? htmlToPlainText(effectivePromptHtml) || name.trim()
       : prompt.trim();
 
@@ -232,7 +234,28 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
           ]
         : undefined;
 
-    const parsedCloze = type === 'cloze' ? parseCloze(effectivePromptHtml || clozeSource) : null;\n    const clozeData = type === 'cloze' && parsedCloze ? {\n      rawText: effectivePromptHtml || clozeSource,\n      subquestions: parsedCloze.subquestions.map(sub => ({\n        index: sub.index, weight: sub.weight, subType: sub.originalType, rawBody: sub.rawBody,\n        canonicalType: sub.canonicalType, alias: sub.alias, start: sub.start, end: sub.end,\n        supported: sub.supported, extension: sub.extension, errors: sub.errors, answers: sub.answers\n      }))\n    } : undefined;\n    const autoGradable = type === 'cloze'\n      ? !!parsedCloze && parsedCloze.subquestions.length > 0 && parsedCloze.subquestions.every(sub => sub.supported && !!sub.canonicalType && sub.errors.length === 0)\n      : isQuestionAutoGradable({ type } as QuestionItem);
+    const parsedCloze = type === 'cloze' ? parseCloze(effectivePromptHtml || clozeSource) : null;
+    const clozeData = type === 'cloze' && parsedCloze ? {
+      rawText: effectivePromptHtml || clozeSource,
+      subquestions: parsedCloze.subquestions.map(sub => ({
+        index: sub.index,
+        weight: sub.weight,
+        subType: sub.originalType,
+        rawBody: sub.rawBody,
+        canonicalType: sub.canonicalType,
+        alias: sub.alias,
+        start: sub.start,
+        end: sub.end,
+        supported: sub.supported,
+        extension: sub.extension,
+        errors: sub.errors,
+        answers: sub.answers
+      }))
+    } : undefined;
+    const autoGradable = type === 'cloze'
+      ? !!parsedCloze && parsedCloze.subquestions.length > 0 &&
+        parsedCloze.subquestions.every(sub => sub.supported && !!sub.canonicalType && sub.errors.length === 0)
+      : isQuestionAutoGradable({ type } as QuestionItem);
 
     const updated: QuestionItem = {
       ...question,
